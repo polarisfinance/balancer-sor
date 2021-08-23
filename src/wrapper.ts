@@ -97,16 +97,14 @@ export class SOR {
             }
             // This calculates the cost to make a swap which is used as an input to SOR to allow it to make gas efficient recommendations
             const costOutputToken = await getCostOutputToken(
+                this.chainId,
                 tokenOut,
+                tokenDecimals,
                 this.gasPrice,
-                this.swapCost,
-                this.provider,
-                this.chainId
+                this.swapCost
             );
 
-            this.tokenCost[tokenOut] = costOutputToken.div(
-                bnum(10 ** tokenDecimals)
-            );
+            this.tokenCost[tokenOut] = costOutputToken;
             return this.tokenCost[tokenOut];
         } else {
             this.tokenCost[tokenOut] = cost;

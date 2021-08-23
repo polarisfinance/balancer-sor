@@ -1068,19 +1068,26 @@ export async function getV2Swap(
         // if it costs 5 DAI to add another pool to the SOR solution and that only generates 1 more DAI,
         // then SOR should not add that pool (if gas costs were zero that pool would be added)
         // Notice that outputToken is TokenOut if SwapType == 'swapExactIn' and TokenIn if SwapType == 'swapExactOut'
+        const { chainId } = await provider.getNetwork();
         if (swapType === 'swapExactIn') {
+            // NOTE: Token decimals may not be 18
+            // temp change as we're planning on removing this
             costOutputToken = await sorv2.getCostOutputToken(
+                chainId,
                 tokenOut,
+                18,
                 gasPrice,
-                swapCost,
-                provider
+                swapCost
             );
         } else {
+            // NOTE: Token decimals may not be 18
+            // temp change as we're planning on removing this
             costOutputToken = await sorv2.getCostOutputToken(
+                chainId,
                 tokenIn,
+                18,
                 gasPrice,
-                swapCost,
-                provider
+                swapCost
             );
         }
     }
