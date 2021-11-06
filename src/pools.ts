@@ -214,6 +214,7 @@ export function filterHopPools(
         let highestNormalizedLiquidityFirstPoolId: string; // Aux variable to find pool with most liquidity for pair (tokenIn -> hopToken)
         let highestNormalizedLiquiditySecond = ZERO; // Aux variable to find pool with most liquidity for pair (hopToken -> tokenOut)
         let highestNormalizedLiquiditySecondPoolId: string; // Aux variable to find pool with most liquidity for pair (hopToken -> tokenOut)
+        const secondOptions: string[] = [];
 
         for (let id in poolsOfInterest) {
             const pool = poolsOfInterest[id];
@@ -256,7 +257,8 @@ export function filterHopPools(
                     highestNormalizedLiquidityFirstPoolId = id;
                 }
             } else if (pool.swapPairType === SwapPairType.HopOut) {
-                const poolPairData = pool.parsePoolPairData(
+                secondOptions.push(pool.id);
+                /*const poolPairData = pool.parsePoolPairData(
                     hopTokens[i],
                     tokenOut
                 );
@@ -272,7 +274,7 @@ export function filterHopPools(
                 ) {
                     highestNormalizedLiquiditySecond = normalizedLiquidity;
                     highestNormalizedLiquiditySecondPoolId = id;
-                }
+                }*/
             } else {
                 // Unknown type
                 continue;
@@ -283,7 +285,7 @@ export function filterHopPools(
 
         filteredPoolsOfInterest[highestNormalizedLiquidityFirstPoolId] =
             poolsOfInterest[highestNormalizedLiquidityFirstPoolId];
-        filteredPoolsOfInterest[highestNormalizedLiquiditySecondPoolId] =
+        /*filteredPoolsOfInterest[highestNormalizedLiquiditySecondPoolId] =
             poolsOfInterest[highestNormalizedLiquiditySecondPoolId];
 
         const path = createMultihopPath(
@@ -294,7 +296,21 @@ export function filterHopPools(
             tokenOut
         );
 
-        paths.push(path);
+        paths.push(path);*/
+
+        for (const poolId of secondOptions) {
+            filteredPoolsOfInterest[poolId] = poolsOfInterest[poolId];
+
+            const path = createMultihopPath(
+                poolsOfInterest[highestNormalizedLiquidityFirstPoolId],
+                poolsOfInterest[poolId],
+                tokenIn,
+                hopTokens[i],
+                tokenOut
+            );
+
+            paths.push(path);
+        }
     }
 
     return [filteredPoolsOfInterest, paths];

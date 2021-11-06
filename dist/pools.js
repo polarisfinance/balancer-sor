@@ -136,6 +136,7 @@ function filterHopPools(tokenIn, tokenOut, hopTokens, poolsOfInterest) {
         let highestNormalizedLiquidityFirstPoolId; // Aux variable to find pool with most liquidity for pair (tokenIn -> hopToken)
         let highestNormalizedLiquiditySecond = bmath_1.ZERO; // Aux variable to find pool with most liquidity for pair (hopToken -> tokenOut)
         let highestNormalizedLiquiditySecondPoolId; // Aux variable to find pool with most liquidity for pair (hopToken -> tokenOut)
+        const secondOptions = [];
         for (let id in poolsOfInterest) {
             const pool = poolsOfInterest[id];
             // We don't consider direct pools for the multihop but we do add it's path
@@ -168,14 +169,24 @@ function filterHopPools(tokenIn, tokenOut, hopTokens, poolsOfInterest) {
                 }
             }
             else if (pool.swapPairType === types_1.SwapPairType.HopOut) {
-                const poolPairData = pool.parsePoolPairData(hopTokens[i], tokenOut);
+                secondOptions.push(pool.id);
+                /*const poolPairData = pool.parsePoolPairData(
+                    hopTokens[i],
+                    tokenOut
+                );
                 // const normalizedLiquidity = pool.getNormalizedLiquidity(hopTokens[i], tokenOut);
-                const normalizedLiquidity = pool.getNormalizedLiquidity(poolPairData);
+                const normalizedLiquidity = pool.getNormalizedLiquidity(
+                    poolPairData
+                );
                 // Cannot be strictly greater otherwise highestNormalizedLiquidityPoolId = 0 if hopTokens[i] balance is 0 in this pool.
-                if (normalizedLiquidity.isGreaterThanOrEqualTo(highestNormalizedLiquiditySecond)) {
+                if (
+                    normalizedLiquidity.isGreaterThanOrEqualTo(
+                        highestNormalizedLiquiditySecond
+                    )
+                ) {
                     highestNormalizedLiquiditySecond = normalizedLiquidity;
                     highestNormalizedLiquiditySecondPoolId = id;
-                }
+                }*/
             }
             else {
                 // Unknown type
@@ -185,10 +196,23 @@ function filterHopPools(tokenIn, tokenOut, hopTokens, poolsOfInterest) {
         firstPoolLoop = false;
         filteredPoolsOfInterest[highestNormalizedLiquidityFirstPoolId] =
             poolsOfInterest[highestNormalizedLiquidityFirstPoolId];
-        filteredPoolsOfInterest[highestNormalizedLiquiditySecondPoolId] =
+        /*filteredPoolsOfInterest[highestNormalizedLiquiditySecondPoolId] =
             poolsOfInterest[highestNormalizedLiquiditySecondPoolId];
-        const path = createMultihopPath(poolsOfInterest[highestNormalizedLiquidityFirstPoolId], poolsOfInterest[highestNormalizedLiquiditySecondPoolId], tokenIn, hopTokens[i], tokenOut);
-        paths.push(path);
+
+        const path = createMultihopPath(
+            poolsOfInterest[highestNormalizedLiquidityFirstPoolId],
+            poolsOfInterest[highestNormalizedLiquiditySecondPoolId],
+            tokenIn,
+            hopTokens[i],
+            tokenOut
+        );
+
+        paths.push(path);*/
+        for (const poolId of secondOptions) {
+            filteredPoolsOfInterest[poolId] = poolsOfInterest[poolId];
+            const path = createMultihopPath(poolsOfInterest[highestNormalizedLiquidityFirstPoolId], poolsOfInterest[poolId], tokenIn, hopTokens[i], tokenOut);
+            paths.push(path);
+        }
     }
     return [filteredPoolsOfInterest, paths];
 }
