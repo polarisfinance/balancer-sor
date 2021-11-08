@@ -21,7 +21,7 @@ function fetchSubgraphPools(SubgraphUrl = '') {
         // can filter for publicSwap too??
         const query = `
       {
-        pools: pools(first: 1000, where: {id_not_in: ["0xae1c69eae0f1342425ea3fdb51e9f11223c7ad5b00010000000000000000000b", "0x5018fa8aa910fa2eea07529d80e7a44b2e2d29cf000100000000000000000022", "0xe2fd25b84aa76486e0cbc2c2ca383c3587abb942000100000000000000000028"]}) {
+        pools: pools(first: 1000, where: {id_not_in: ["0xae1c69eae0f1342425ea3fdb51e9f11223c7ad5b00010000000000000000000b", "0x5018fa8aa910fa2eea07529d80e7a44b2e2d29cf000100000000000000000022", "0xe2fd25b84aa76486e0cbc2c2ca383c3587abb942000100000000000000000028", "0x51c5875ee17f1af4ddca0ce0df8dcad0b115b191000100000000000000000012"]}) {
           id
           address
           poolType
