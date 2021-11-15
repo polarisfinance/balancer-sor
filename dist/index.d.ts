@@ -73,6 +73,12 @@ declare type SubgraphToken = {
     priceRate: string;
     weight: string | null;
 };
+declare type SubgraphLatestTokenPrice = {
+    id: string;
+    asset: string;
+    pricingAsset: string;
+    price: string;
+};
 interface SwapV2 {
     poolId: string;
     assetInIndex: number;
@@ -181,9 +187,10 @@ declare class PoolCacher {
 
 declare class SwapCostCalculator {
     private chainId;
+    private subgraphUrl;
     private tokenPriceCache;
     private initializeCache;
-    constructor(chainId: number);
+    constructor(chainId: number, subgraphUrl: string | null);
     /**
      * Sets the chain ID to be used when querying asset prices
      * @param chainId - the chain ID of the chain to switch to
@@ -221,7 +228,7 @@ declare class SOR {
     constructor(
         provider: BaseProvider,
         chainId: number,
-        poolsSource: string | null,
+        subgraphUrl: string | null,
         initialPools?: SubgraphPoolBase[]
     );
     getPools(): SubgraphPoolBase[];
@@ -275,6 +282,7 @@ export {
     PoolPairDictionary,
     PoolTypes,
     SOR,
+    SubgraphLatestTokenPrice,
     SubgraphPoolBase,
     SubgraphToken,
     Swap,

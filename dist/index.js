@@ -35378,7 +35378,7 @@ function fetchSubgraphPools(subgraphUrl) {
       {
         pools: pools(
           first: 1000,
-          where: { swapEnabled: true, id_not_in: ["0xae1c69eae0f1342425ea3fdb51e9f11223c7ad5b00010000000000000000000b", "0x5018fa8aa910fa2eea07529d80e7a44b2e2d29cf000100000000000000000022", "0xe2fd25b84aa76486e0cbc2c2ca383c3587abb942000100000000000000000028", "0x51c5875ee17f1af4ddca0ce0df8dcad0b115b191000100000000000000000012", "0x78dec89d3b32f80fb388da61d87fc4c750d92b4e000200000000000000000087"] },
+          where: { swapEnabled: true, id_not_in: ["0xae1c69eae0f1342425ea3fdb51e9f11223c7ad5b00010000000000000000000b", "0x5018fa8aa910fa2eea07529d80e7a44b2e2d29cf000100000000000000000022", "0xe2fd25b84aa76486e0cbc2c2ca383c3587abb942000100000000000000000028", "0x51c5875ee17f1af4ddca0ce0df8dcad0b115b191000100000000000000000012"] },
           orderBy: totalLiquidity,
           orderDirection: desc
         ) {
@@ -36074,6 +36074,7 @@ const getPlatformId = (chainId) => {
         42: 'ethereum',
         137: 'polygon-pos',
         42161: 'arbitrum-one',
+        250: 'fantom',
     };
     return mapping[chainId.toString()] || 'ethereum';
 };
@@ -36085,6 +36086,7 @@ const getNativeAssetId = (chainId) => {
         // TODO: convert through ETH as intermediary
         137: '',
         42161: 'eth',
+        250: '',
     };
     return mapping[chainId.toString()] || 'eth';
 };
@@ -36114,6 +36116,55 @@ function getTokenPriceInNativeAsset(chainId, tokenAddress) {
     });
 }
 
+function getTokenPriceInNativeAssetFromSubgraph(
+    tokenAddress,
+    wrappedNativeAssetAddress,
+    subgraphUrl
+) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const latestTokenPrice = yield fetchSubgraphLatestTokenPrice(
+            tokenAddress,
+            wrappedNativeAssetAddress,
+            subgraphUrl
+        );
+        if (!latestTokenPrice) {
+            throw Error('No latest token price available from the subgraph');
+        }
+        return latestTokenPrice.price;
+    });
+}
+function fetchSubgraphLatestTokenPrice(
+    tokenAddress,
+    wrappedNativeAssetAddress,
+    subgraphUrl
+) {
+    var _a;
+    return __awaiter(this, void 0, void 0, function* () {
+        const query = `
+        {
+            latestPrice(id: "${tokenAddress.toLowerCase()}-${wrappedNativeAssetAddress.toLowerCase()}") {
+                price
+                pricingAsset
+                asset
+                id
+            }
+        }
+    `;
+        const response = yield fetch__default['default'](subgraphUrl, {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                query,
+            }),
+        });
+        const { data } = yield response.json();
+        return (_a = data.latestPrice) !== null && _a !== void 0 ? _a : null;
+    });
+}
+
 function calculateTotalSwapCost(tokenPriceWei, swapGas, gasPriceWei) {
     return gasPriceWei
         .mul(swapGas)
@@ -36121,8 +36172,9 @@ function calculateTotalSwapCost(tokenPriceWei, swapGas, gasPriceWei) {
         .div(constants.WeiPerEther);
 }
 class SwapCostCalculator {
-    constructor(chainId) {
+    constructor(chainId, subgraphUrl) {
         this.chainId = chainId;
+        this.subgraphUrl = subgraphUrl;
         this.initializeCache();
     }
     initializeCache() {
@@ -36149,13 +36201,19 @@ class SwapCostCalculator {
                 this.tokenPriceCache[tokenAddress.toLowerCase()];
             if (cachedTokenPrice) return cachedTokenPrice;
             try {
-                // Query Coingecko first and only check decimals
+                // Query either the subgraph or Coingecko first and only check decimals
                 // if we get a valid response to avoid unnecessary queries
-                const ethPerToken = yield getTokenPriceInNativeAsset(
-                    this.chainId,
-                    tokenAddress
-                );
-                // Coingecko returns price of token in terms of ETH
+                const ethPerToken = this.subgraphUrl
+                    ? yield getTokenPriceInNativeAssetFromSubgraph(
+                          tokenAddress,
+                          WETHADDR[this.chainId].toLowerCase(),
+                          this.subgraphUrl
+                      )
+                    : yield getTokenPriceInNativeAsset(
+                          this.chainId,
+                          tokenAddress
+                      );
+                // We get the price of token in terms of ETH
                 // We want the price of 1 ETH in terms of the token base units
                 const ethPriceInToken = bnum(1)
                     .div(bnum(ethPerToken))
@@ -36201,7 +36259,7 @@ class SwapCostCalculator {
 }
 
 class SOR {
-    constructor(provider, chainId, poolsSource, initialPools = []) {
+    constructor(provider, chainId, subgraphUrl, initialPools = []) {
         this.provider = provider;
         this.chainId = chainId;
         this.defaultSwapOptions = {
@@ -36215,11 +36273,11 @@ class SOR {
         this.poolCacher = new PoolCacher(
             provider,
             chainId,
-            poolsSource,
+            subgraphUrl,
             initialPools
         );
         this.routeProposer = new RouteProposer();
-        this.swapCostCalculator = new SwapCostCalculator(chainId);
+        this.swapCostCalculator = new SwapCostCalculator(chainId, subgraphUrl);
     }
     getPools() {
         return this.poolCacher.getPools();
