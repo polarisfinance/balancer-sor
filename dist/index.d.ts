@@ -47,6 +47,7 @@ interface Swap {
     tokenIn: string;
     tokenOut: string;
     swapAmount?: string;
+    swapAmountOut?: string;
     limitReturnAmount?: string;
     maxPrice?: string;
     tokenInDecimals: number;
@@ -105,6 +106,22 @@ interface SwapInfo {
     tokenIn: string;
     tokenOut: string;
     marketSp: string;
+    routes: SwapInfoRoute[];
+}
+interface SwapInfoRoute {
+    tokenIn: string;
+    tokenInAmount: string;
+    tokenOut: string;
+    tokenOutAmount: string;
+    share: number;
+    hops: SwapInfoRouteHop[];
+}
+interface SwapInfoRouteHop {
+    tokenIn: string;
+    tokenInAmount: string;
+    tokenOut: string;
+    tokenOutAmount: string;
+    poolId: string;
 }
 interface PoolDictionary {
     [poolId: string]: PoolBase;
@@ -332,6 +349,8 @@ export {
     SubgraphToken,
     Swap,
     SwapInfo,
+    SwapInfoRoute,
+    SwapInfoRouteHop,
     SwapOptions,
     SwapPairType,
     SwapTypes,

@@ -10089,6 +10089,7 @@ const formatSwaps$1 = (
                     tokenIn: path.swaps[i].tokenIn,
                     tokenOut: path.swaps[i].tokenOut,
                     swapAmount: amounts[i].toString(),
+                    swapAmountOut: amounts[i + 1].toString(),
                     tokenInDecimals: path.poolPairData[i].decimalsIn,
                     tokenOutDecimals: path.poolPairData[i].decimalsOut,
                 };
@@ -10110,6 +10111,7 @@ const formatSwaps$1 = (
                     tokenIn: path.swaps[n - 1 - i].tokenIn,
                     tokenOut: path.swaps[n - 1 - i].tokenOut,
                     swapAmount: amounts[1].toString(),
+                    swapAmountOut: amounts[0].toString(),
                     tokenInDecimals: path.poolPairData[n - 1 - i].decimalsIn,
                     tokenOutDecimals: path.poolPairData[n - 1 - i].decimalsOut,
                 };
@@ -11819,6 +11821,7 @@ const EMPTY_SWAPINFO = {
     returnAmountConsideringFees: Zero,
     returnAmountFromSwaps: Zero,
     marketSp: Zero.toString(),
+    routes: [],
 };
 
 const Lido = {
@@ -12924,6 +12927,41 @@ const formatSequence = (swapKind, sequence, tokenAddresses) => {
         };
     });
 };
+/**
+ * Formats a sequence of swaps to a format that is useful for displaying the routes in user interfaces.
+ * @dev The swaps are converted to an array of routes, where each route has an array of hops
+ * @param routes - The original Swaps
+ * @param swapAmount - The total amount being swapped
+ * @returns SwapInfoRoute[] - The swaps formatted as routes with hops
+ */
+function formatRoutes(routes, swapAmount) {
+    return routes.map((swaps) => {
+        const first = swaps[0];
+        const last = swaps[swaps.length - 1];
+        const tokenInAmountScaled = scale(
+            bnum(first.swapAmount || '0'),
+            first.tokenInDecimals
+        );
+        return {
+            tokenIn: first.tokenIn,
+            tokenOut: last.tokenOut,
+            tokenInAmount: first.swapAmount || '0',
+            tokenOutAmount: last.swapAmountOut || '0',
+            share: tokenInAmountScaled
+                .div(bnum(swapAmount.toString()))
+                .toNumber(),
+            hops: swaps.map((swap) => {
+                return {
+                    tokenIn: swap.tokenIn,
+                    tokenOut: swap.tokenOut,
+                    tokenInAmount: swap.swapAmount || '0',
+                    tokenOutAmount: swap.swapAmountOut || '0',
+                    poolId: swap.pool,
+                };
+            }),
+        };
+    });
+}
 function formatSwaps(
     swapsOriginal,
     swapType,
@@ -12949,6 +12987,7 @@ function formatSwaps(
             .add(dust)
             .toString();
     }
+    const routes = formatRoutes(swapsOriginal, swapAmount);
     const swapInfo = {
         swapAmount,
         returnAmount,
@@ -12958,6 +12997,7 @@ function formatSwaps(
         tokenIn,
         tokenOut,
         marketSp,
+        routes,
     };
     return swapInfo;
 }
