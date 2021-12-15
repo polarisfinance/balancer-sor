@@ -3643,7 +3643,546 @@ var bn = { exports: {} };
 
 var _BN = bn.exports;
 
-const version$2 = 'logger/5.4.0';
+const version$3 = 'logger/5.5.0';
+
+let _permanentCensorErrors$1 = false;
+let _censorErrors$1 = false;
+const LogLevels$1 = {
+    debug: 1,
+    default: 2,
+    info: 2,
+    warning: 3,
+    error: 4,
+    off: 5,
+};
+let _logLevel$1 = LogLevels$1['default'];
+let _globalLogger$1 = null;
+function _checkNormalize$1() {
+    try {
+        const missing = [];
+        // Make sure all forms of normalization are supported
+        ['NFD', 'NFC', 'NFKD', 'NFKC'].forEach((form) => {
+            try {
+                if ('test'.normalize(form) !== 'test') {
+                    throw new Error('bad normalize');
+                }
+            } catch (error) {
+                missing.push(form);
+            }
+        });
+        if (missing.length) {
+            throw new Error('missing ' + missing.join(', '));
+        }
+        if (
+            String.fromCharCode(0xe9).normalize('NFD') !==
+            String.fromCharCode(0x65, 0x0301)
+        ) {
+            throw new Error('broken implementation');
+        }
+    } catch (error) {
+        return error.message;
+    }
+    return null;
+}
+const _normalizeError$1 = _checkNormalize$1();
+var LogLevel$1;
+(function (LogLevel) {
+    LogLevel['DEBUG'] = 'DEBUG';
+    LogLevel['INFO'] = 'INFO';
+    LogLevel['WARNING'] = 'WARNING';
+    LogLevel['ERROR'] = 'ERROR';
+    LogLevel['OFF'] = 'OFF';
+})(LogLevel$1 || (LogLevel$1 = {}));
+var ErrorCode$1;
+(function (ErrorCode) {
+    ///////////////////
+    // Generic Errors
+    // Unknown Error
+    ErrorCode['UNKNOWN_ERROR'] = 'UNKNOWN_ERROR';
+    // Not Implemented
+    ErrorCode['NOT_IMPLEMENTED'] = 'NOT_IMPLEMENTED';
+    // Unsupported Operation
+    //   - operation
+    ErrorCode['UNSUPPORTED_OPERATION'] = 'UNSUPPORTED_OPERATION';
+    // Network Error (i.e. Ethereum Network, such as an invalid chain ID)
+    //   - event ("noNetwork" is not re-thrown in provider.ready; otherwise thrown)
+    ErrorCode['NETWORK_ERROR'] = 'NETWORK_ERROR';
+    // Some sort of bad response from the server
+    ErrorCode['SERVER_ERROR'] = 'SERVER_ERROR';
+    // Timeout
+    ErrorCode['TIMEOUT'] = 'TIMEOUT';
+    ///////////////////
+    // Operational  Errors
+    // Buffer Overrun
+    ErrorCode['BUFFER_OVERRUN'] = 'BUFFER_OVERRUN';
+    // Numeric Fault
+    //   - operation: the operation being executed
+    //   - fault: the reason this faulted
+    ErrorCode['NUMERIC_FAULT'] = 'NUMERIC_FAULT';
+    ///////////////////
+    // Argument Errors
+    // Missing new operator to an object
+    //  - name: The name of the class
+    ErrorCode['MISSING_NEW'] = 'MISSING_NEW';
+    // Invalid argument (e.g. value is incompatible with type) to a function:
+    //   - argument: The argument name that was invalid
+    //   - value: The value of the argument
+    ErrorCode['INVALID_ARGUMENT'] = 'INVALID_ARGUMENT';
+    // Missing argument to a function:
+    //   - count: The number of arguments received
+    //   - expectedCount: The number of arguments expected
+    ErrorCode['MISSING_ARGUMENT'] = 'MISSING_ARGUMENT';
+    // Too many arguments
+    //   - count: The number of arguments received
+    //   - expectedCount: The number of arguments expected
+    ErrorCode['UNEXPECTED_ARGUMENT'] = 'UNEXPECTED_ARGUMENT';
+    ///////////////////
+    // Blockchain Errors
+    // Call exception
+    //  - transaction: the transaction
+    //  - address?: the contract address
+    //  - args?: The arguments passed into the function
+    //  - method?: The Solidity method signature
+    //  - errorSignature?: The EIP848 error signature
+    //  - errorArgs?: The EIP848 error parameters
+    //  - reason: The reason (only for EIP848 "Error(string)")
+    ErrorCode['CALL_EXCEPTION'] = 'CALL_EXCEPTION';
+    // Insufficient funds (< value + gasLimit * gasPrice)
+    //   - transaction: the transaction attempted
+    ErrorCode['INSUFFICIENT_FUNDS'] = 'INSUFFICIENT_FUNDS';
+    // Nonce has already been used
+    //   - transaction: the transaction attempted
+    ErrorCode['NONCE_EXPIRED'] = 'NONCE_EXPIRED';
+    // The replacement fee for the transaction is too low
+    //   - transaction: the transaction attempted
+    ErrorCode['REPLACEMENT_UNDERPRICED'] = 'REPLACEMENT_UNDERPRICED';
+    // The gas limit could not be estimated
+    //   - transaction: the transaction passed to estimateGas
+    ErrorCode['UNPREDICTABLE_GAS_LIMIT'] = 'UNPREDICTABLE_GAS_LIMIT';
+    // The transaction was replaced by one with a higher gas price
+    //   - reason: "cancelled", "replaced" or "repriced"
+    //   - cancelled: true if reason == "cancelled" or reason == "replaced")
+    //   - hash: original transaction hash
+    //   - replacement: the full TransactionsResponse for the replacement
+    //   - receipt: the receipt of the replacement
+    ErrorCode['TRANSACTION_REPLACED'] = 'TRANSACTION_REPLACED';
+})(ErrorCode$1 || (ErrorCode$1 = {}));
+const HEX = '0123456789abcdef';
+class Logger$1 {
+    constructor(version) {
+        Object.defineProperty(this, 'version', {
+            enumerable: true,
+            value: version,
+            writable: false,
+        });
+    }
+    _log(logLevel, args) {
+        const level = logLevel.toLowerCase();
+        if (LogLevels$1[level] == null) {
+            this.throwArgumentError(
+                'invalid log level name',
+                'logLevel',
+                logLevel
+            );
+        }
+        if (_logLevel$1 > LogLevels$1[level]) {
+            return;
+        }
+        console.log.apply(console, args);
+    }
+    debug(...args) {
+        this._log(Logger$1.levels.DEBUG, args);
+    }
+    info(...args) {
+        this._log(Logger$1.levels.INFO, args);
+    }
+    warn(...args) {
+        this._log(Logger$1.levels.WARNING, args);
+    }
+    makeError(message, code, params) {
+        // Errors are being censored
+        if (_censorErrors$1) {
+            return this.makeError('censored error', code, {});
+        }
+        if (!code) {
+            code = Logger$1.errors.UNKNOWN_ERROR;
+        }
+        if (!params) {
+            params = {};
+        }
+        const messageDetails = [];
+        Object.keys(params).forEach((key) => {
+            const value = params[key];
+            try {
+                if (value instanceof Uint8Array) {
+                    let hex = '';
+                    for (let i = 0; i < value.length; i++) {
+                        hex += HEX[value[i] >> 4];
+                        hex += HEX[value[i] & 0x0f];
+                    }
+                    messageDetails.push(key + '=Uint8Array(0x' + hex + ')');
+                } else {
+                    messageDetails.push(key + '=' + JSON.stringify(value));
+                }
+            } catch (error) {
+                messageDetails.push(
+                    key + '=' + JSON.stringify(params[key].toString())
+                );
+            }
+        });
+        messageDetails.push(`code=${code}`);
+        messageDetails.push(`version=${this.version}`);
+        const reason = message;
+        if (messageDetails.length) {
+            message += ' (' + messageDetails.join(', ') + ')';
+        }
+        // @TODO: Any??
+        const error = new Error(message);
+        error.reason = reason;
+        error.code = code;
+        Object.keys(params).forEach(function (key) {
+            error[key] = params[key];
+        });
+        return error;
+    }
+    throwError(message, code, params) {
+        throw this.makeError(message, code, params);
+    }
+    throwArgumentError(message, name, value) {
+        return this.throwError(message, Logger$1.errors.INVALID_ARGUMENT, {
+            argument: name,
+            value: value,
+        });
+    }
+    assert(condition, message, code, params) {
+        if (!!condition) {
+            return;
+        }
+        this.throwError(message, code, params);
+    }
+    assertArgument(condition, message, name, value) {
+        if (!!condition) {
+            return;
+        }
+        this.throwArgumentError(message, name, value);
+    }
+    checkNormalize(message) {
+        if (_normalizeError$1) {
+            this.throwError(
+                'platform missing String.prototype.normalize',
+                Logger$1.errors.UNSUPPORTED_OPERATION,
+                {
+                    operation: 'String.prototype.normalize',
+                    form: _normalizeError$1,
+                }
+            );
+        }
+    }
+    checkSafeUint53(value, message) {
+        if (typeof value !== 'number') {
+            return;
+        }
+        if (message == null) {
+            message = 'value not safe';
+        }
+        if (value < 0 || value >= 0x1fffffffffffff) {
+            this.throwError(message, Logger$1.errors.NUMERIC_FAULT, {
+                operation: 'checkSafeInteger',
+                fault: 'out-of-safe-range',
+                value: value,
+            });
+        }
+        if (value % 1) {
+            this.throwError(message, Logger$1.errors.NUMERIC_FAULT, {
+                operation: 'checkSafeInteger',
+                fault: 'non-integer',
+                value: value,
+            });
+        }
+    }
+    checkArgumentCount(count, expectedCount, message) {
+        if (message) {
+            message = ': ' + message;
+        } else {
+            message = '';
+        }
+        if (count < expectedCount) {
+            this.throwError(
+                'missing argument' + message,
+                Logger$1.errors.MISSING_ARGUMENT,
+                {
+                    count: count,
+                    expectedCount: expectedCount,
+                }
+            );
+        }
+        if (count > expectedCount) {
+            this.throwError(
+                'too many arguments' + message,
+                Logger$1.errors.UNEXPECTED_ARGUMENT,
+                {
+                    count: count,
+                    expectedCount: expectedCount,
+                }
+            );
+        }
+    }
+    checkNew(target, kind) {
+        if (target === Object || target == null) {
+            this.throwError('missing new', Logger$1.errors.MISSING_NEW, {
+                name: kind.name,
+            });
+        }
+    }
+    checkAbstract(target, kind) {
+        if (target === kind) {
+            this.throwError(
+                'cannot instantiate abstract class ' +
+                    JSON.stringify(kind.name) +
+                    ' directly; use a sub-class',
+                Logger$1.errors.UNSUPPORTED_OPERATION,
+                { name: target.name, operation: 'new' }
+            );
+        } else if (target === Object || target == null) {
+            this.throwError('missing new', Logger$1.errors.MISSING_NEW, {
+                name: kind.name,
+            });
+        }
+    }
+    static globalLogger() {
+        if (!_globalLogger$1) {
+            _globalLogger$1 = new Logger$1(version$3);
+        }
+        return _globalLogger$1;
+    }
+    static setCensorship(censorship, permanent) {
+        if (!censorship && permanent) {
+            this.globalLogger().throwError(
+                'cannot permanently disable censorship',
+                Logger$1.errors.UNSUPPORTED_OPERATION,
+                {
+                    operation: 'setCensorship',
+                }
+            );
+        }
+        if (_permanentCensorErrors$1) {
+            if (!censorship) {
+                return;
+            }
+            this.globalLogger().throwError(
+                'error censorship permanent',
+                Logger$1.errors.UNSUPPORTED_OPERATION,
+                {
+                    operation: 'setCensorship',
+                }
+            );
+        }
+        _censorErrors$1 = !!censorship;
+        _permanentCensorErrors$1 = !!permanent;
+    }
+    static setLogLevel(logLevel) {
+        const level = LogLevels$1[logLevel.toLowerCase()];
+        if (level == null) {
+            Logger$1.globalLogger().warn('invalid log level - ' + logLevel);
+            return;
+        }
+        _logLevel$1 = level;
+    }
+    static from(version) {
+        return new Logger$1(version);
+    }
+}
+Logger$1.errors = ErrorCode$1;
+Logger$1.levels = LogLevel$1;
+
+const version$2 = 'bytes/5.4.0';
+
+const logger$2 = new Logger$1(version$2);
+///////////////////////////////
+function isHexable(value) {
+    return !!value.toHexString;
+}
+function addSlice(array) {
+    if (array.slice) {
+        return array;
+    }
+    array.slice = function () {
+        const args = Array.prototype.slice.call(arguments);
+        return addSlice(
+            new Uint8Array(Array.prototype.slice.apply(array, args))
+        );
+    };
+    return array;
+}
+function isBytes(value) {
+    if (value == null) {
+        return false;
+    }
+    if (value.constructor === Uint8Array) {
+        return true;
+    }
+    if (typeof value === 'string') {
+        return false;
+    }
+    if (value.length == null) {
+        return false;
+    }
+    for (let i = 0; i < value.length; i++) {
+        const v = value[i];
+        if (typeof v !== 'number' || v < 0 || v >= 256 || v % 1) {
+            return false;
+        }
+    }
+    return true;
+}
+function arrayify(value, options) {
+    if (!options) {
+        options = {};
+    }
+    if (typeof value === 'number') {
+        logger$2.checkSafeUint53(value, 'invalid arrayify value');
+        const result = [];
+        while (value) {
+            result.unshift(value & 0xff);
+            value = parseInt(String(value / 256));
+        }
+        if (result.length === 0) {
+            result.push(0);
+        }
+        return addSlice(new Uint8Array(result));
+    }
+    if (
+        options.allowMissingPrefix &&
+        typeof value === 'string' &&
+        value.substring(0, 2) !== '0x'
+    ) {
+        value = '0x' + value;
+    }
+    if (isHexable(value)) {
+        value = value.toHexString();
+    }
+    if (isHexString(value)) {
+        let hex = value.substring(2);
+        if (hex.length % 2) {
+            if (options.hexPad === 'left') {
+                hex = '0x0' + hex.substring(2);
+            } else if (options.hexPad === 'right') {
+                hex += '0';
+            } else {
+                logger$2.throwArgumentError(
+                    'hex data is odd-length',
+                    'value',
+                    value
+                );
+            }
+        }
+        const result = [];
+        for (let i = 0; i < hex.length; i += 2) {
+            result.push(parseInt(hex.substring(i, i + 2), 16));
+        }
+        return addSlice(new Uint8Array(result));
+    }
+    if (isBytes(value)) {
+        return addSlice(new Uint8Array(value));
+    }
+    return logger$2.throwArgumentError(
+        'invalid arrayify value',
+        'value',
+        value
+    );
+}
+function isHexString(value, length) {
+    if (typeof value !== 'string' || !value.match(/^0x[0-9A-Fa-f]*$/)) {
+        return false;
+    }
+    if (length && value.length !== 2 + 2 * length) {
+        return false;
+    }
+    return true;
+}
+const HexCharacters = '0123456789abcdef';
+function hexlify(value, options) {
+    if (!options) {
+        options = {};
+    }
+    if (typeof value === 'number') {
+        logger$2.checkSafeUint53(value, 'invalid hexlify value');
+        let hex = '';
+        while (value) {
+            hex = HexCharacters[value & 0xf] + hex;
+            value = Math.floor(value / 16);
+        }
+        if (hex.length) {
+            if (hex.length % 2) {
+                hex = '0' + hex;
+            }
+            return '0x' + hex;
+        }
+        return '0x00';
+    }
+    if (typeof value === 'bigint') {
+        value = value.toString(16);
+        if (value.length % 2) {
+            return '0x0' + value;
+        }
+        return '0x' + value;
+    }
+    if (
+        options.allowMissingPrefix &&
+        typeof value === 'string' &&
+        value.substring(0, 2) !== '0x'
+    ) {
+        value = '0x' + value;
+    }
+    if (isHexable(value)) {
+        return value.toHexString();
+    }
+    if (isHexString(value)) {
+        if (value.length % 2) {
+            if (options.hexPad === 'left') {
+                value = '0x0' + value.substring(2);
+            } else if (options.hexPad === 'right') {
+                value += '0';
+            } else {
+                logger$2.throwArgumentError(
+                    'hex data is odd-length',
+                    'value',
+                    value
+                );
+            }
+        }
+        return value.toLowerCase();
+    }
+    if (isBytes(value)) {
+        let result = '0x';
+        for (let i = 0; i < value.length; i++) {
+            let v = value[i];
+            result += HexCharacters[(v & 0xf0) >> 4] + HexCharacters[v & 0x0f];
+        }
+        return result;
+    }
+    return logger$2.throwArgumentError('invalid hexlify value', 'value', value);
+}
+function hexZeroPad(value, length) {
+    if (typeof value !== 'string') {
+        value = hexlify(value);
+    } else if (!isHexString(value)) {
+        logger$2.throwArgumentError('invalid hex string', 'value', value);
+    }
+    if (value.length > 2 * length + 2) {
+        logger$2.throwArgumentError(
+            'value out of range',
+            'value',
+            arguments[1]
+        );
+    }
+    while (value.length < 2 * length + 2) {
+        value = '0x0' + value.substring(2);
+    }
+    return value;
+}
+
+const version$1 = 'logger/5.4.0';
 
 let _permanentCensorErrors = false;
 let _censorErrors = false;
@@ -3940,7 +4479,7 @@ class Logger {
     }
     static globalLogger() {
         if (!_globalLogger) {
-            _globalLogger = new Logger(version$2);
+            _globalLogger = new Logger(version$1);
         }
         return _globalLogger;
     }
@@ -3984,194 +4523,7 @@ class Logger {
 Logger.errors = ErrorCode;
 Logger.levels = LogLevel;
 
-const version$1 = 'bytes/5.4.0';
-
-const logger$2 = new Logger(version$1);
-///////////////////////////////
-function isHexable(value) {
-    return !!value.toHexString;
-}
-function addSlice(array) {
-    if (array.slice) {
-        return array;
-    }
-    array.slice = function () {
-        const args = Array.prototype.slice.call(arguments);
-        return addSlice(
-            new Uint8Array(Array.prototype.slice.apply(array, args))
-        );
-    };
-    return array;
-}
-function isBytes(value) {
-    if (value == null) {
-        return false;
-    }
-    if (value.constructor === Uint8Array) {
-        return true;
-    }
-    if (typeof value === 'string') {
-        return false;
-    }
-    if (value.length == null) {
-        return false;
-    }
-    for (let i = 0; i < value.length; i++) {
-        const v = value[i];
-        if (typeof v !== 'number' || v < 0 || v >= 256 || v % 1) {
-            return false;
-        }
-    }
-    return true;
-}
-function arrayify(value, options) {
-    if (!options) {
-        options = {};
-    }
-    if (typeof value === 'number') {
-        logger$2.checkSafeUint53(value, 'invalid arrayify value');
-        const result = [];
-        while (value) {
-            result.unshift(value & 0xff);
-            value = parseInt(String(value / 256));
-        }
-        if (result.length === 0) {
-            result.push(0);
-        }
-        return addSlice(new Uint8Array(result));
-    }
-    if (
-        options.allowMissingPrefix &&
-        typeof value === 'string' &&
-        value.substring(0, 2) !== '0x'
-    ) {
-        value = '0x' + value;
-    }
-    if (isHexable(value)) {
-        value = value.toHexString();
-    }
-    if (isHexString(value)) {
-        let hex = value.substring(2);
-        if (hex.length % 2) {
-            if (options.hexPad === 'left') {
-                hex = '0x0' + hex.substring(2);
-            } else if (options.hexPad === 'right') {
-                hex += '0';
-            } else {
-                logger$2.throwArgumentError(
-                    'hex data is odd-length',
-                    'value',
-                    value
-                );
-            }
-        }
-        const result = [];
-        for (let i = 0; i < hex.length; i += 2) {
-            result.push(parseInt(hex.substring(i, i + 2), 16));
-        }
-        return addSlice(new Uint8Array(result));
-    }
-    if (isBytes(value)) {
-        return addSlice(new Uint8Array(value));
-    }
-    return logger$2.throwArgumentError(
-        'invalid arrayify value',
-        'value',
-        value
-    );
-}
-function isHexString(value, length) {
-    if (typeof value !== 'string' || !value.match(/^0x[0-9A-Fa-f]*$/)) {
-        return false;
-    }
-    if (length && value.length !== 2 + 2 * length) {
-        return false;
-    }
-    return true;
-}
-const HexCharacters = '0123456789abcdef';
-function hexlify(value, options) {
-    if (!options) {
-        options = {};
-    }
-    if (typeof value === 'number') {
-        logger$2.checkSafeUint53(value, 'invalid hexlify value');
-        let hex = '';
-        while (value) {
-            hex = HexCharacters[value & 0xf] + hex;
-            value = Math.floor(value / 16);
-        }
-        if (hex.length) {
-            if (hex.length % 2) {
-                hex = '0' + hex;
-            }
-            return '0x' + hex;
-        }
-        return '0x00';
-    }
-    if (typeof value === 'bigint') {
-        value = value.toString(16);
-        if (value.length % 2) {
-            return '0x0' + value;
-        }
-        return '0x' + value;
-    }
-    if (
-        options.allowMissingPrefix &&
-        typeof value === 'string' &&
-        value.substring(0, 2) !== '0x'
-    ) {
-        value = '0x' + value;
-    }
-    if (isHexable(value)) {
-        return value.toHexString();
-    }
-    if (isHexString(value)) {
-        if (value.length % 2) {
-            if (options.hexPad === 'left') {
-                value = '0x0' + value.substring(2);
-            } else if (options.hexPad === 'right') {
-                value += '0';
-            } else {
-                logger$2.throwArgumentError(
-                    'hex data is odd-length',
-                    'value',
-                    value
-                );
-            }
-        }
-        return value.toLowerCase();
-    }
-    if (isBytes(value)) {
-        let result = '0x';
-        for (let i = 0; i < value.length; i++) {
-            let v = value[i];
-            result += HexCharacters[(v & 0xf0) >> 4] + HexCharacters[v & 0x0f];
-        }
-        return result;
-    }
-    return logger$2.throwArgumentError('invalid hexlify value', 'value', value);
-}
-function hexZeroPad(value, length) {
-    if (typeof value !== 'string') {
-        value = hexlify(value);
-    } else if (!isHexString(value)) {
-        logger$2.throwArgumentError('invalid hex string', 'value', value);
-    }
-    if (value.length > 2 * length + 2) {
-        logger$2.throwArgumentError(
-            'value out of range',
-            'value',
-            arguments[1]
-        );
-    }
-    while (value.length < 2 * length + 2) {
-        value = '0x0' + value.substring(2);
-    }
-    return value;
-}
-
-const version = 'bignumber/5.4.1';
+const version = 'bignumber/5.4.2';
 
 var BN = _BN.BN;
 const logger$1 = new Logger(version);
@@ -4583,19 +4935,21 @@ function parseFixed(value, decimals) {
     if (!fraction) {
         fraction = '0';
     }
-    // Get significant digits to check truncation for underflow
-    {
-        const sigFraction = fraction.replace(
-            /^([0-9]*?)(0*)$/,
-            (all, sig, zeros) => sig
+    // Trim trialing zeros
+    while (fraction[fraction.length - 1] === '0') {
+        fraction = fraction.substring(0, fraction.length - 1);
+    }
+    // Check the fraction doesn't exceed our decimals
+    if (fraction.length > multiplier.length - 1) {
+        throwFault(
+            'fractional component exceeds decimals',
+            'underflow',
+            'parseFixed'
         );
-        if (sigFraction.length > multiplier.length - 1) {
-            throwFault(
-                'fractional component exceeds decimals',
-                'underflow',
-                'parseFixed'
-            );
-        }
+    }
+    // If decimals is 0, we have an empty string for fraction
+    if (fraction === '') {
+        fraction = '0';
     }
     // Fully pad the string with zeros to get to wei
     while (fraction.length < multiplier.length - 1) {
@@ -9808,6 +10162,1347 @@ const isSameAddress = (address1, address2) =>
 
 var src = {};
 
+var linear = {};
+
+var bigNumber = {};
+
+var require$$0$2 = /*@__PURE__*/ getAugmentedNamespace(bignumber);
+
+(function (exports) {
+    Object.defineProperty(exports, '__esModule', { value: true });
+    exports.scaleAll = exports.scale = exports.bn = void 0;
+    const bignumber_js_1 = require$$0$2;
+    bignumber_js_1.BigNumber.config({
+        EXPONENTIAL_AT: [-100, 100],
+        ROUNDING_MODE: 1,
+        DECIMAL_PLACES: 18,
+    });
+    exports.default = bignumber_js_1.BigNumber;
+    const bn = (value) => new bignumber_js_1.BigNumber(value);
+    exports.bn = bn;
+    const scale = (value, decimalPlaces) =>
+        (0, exports.bn)(value).times((0, exports.bn)(10).pow(decimalPlaces));
+    exports.scale = scale;
+    const scaleAll = (values, decimalPlaces) =>
+        values.map((x) => (0, exports.scale)(x, decimalPlaces));
+    exports.scaleAll = scaleAll;
+})(bigNumber);
+
+var base = {};
+
+var math$8 = {};
+
+(function (exports) {
+    // Ported from Solidity:
+    // https://github.com/balancer-labs/balancer-v2-monorepo/blob/ce70f7663e0ac94b25ed60cb86faaa8199fd9e13/pkg/solidity-utils/contracts/math/Math.sol
+    Object.defineProperty(exports, '__esModule', { value: true });
+    exports.divUp =
+        exports.divDown =
+        exports.div =
+        exports.mul =
+        exports.min =
+        exports.max =
+        exports.sub =
+        exports.add =
+        exports.TWO =
+        exports.ONE =
+        exports.ZERO =
+            void 0;
+    const big_number_1 = bigNumber;
+    exports.ZERO = (0, big_number_1.bn)(0);
+    exports.ONE = (0, big_number_1.bn)(1);
+    exports.TWO = (0, big_number_1.bn)(2);
+    const add = (a, b) => {
+        return a.plus(b);
+    };
+    exports.add = add;
+    const sub = (a, b) => {
+        if (b.gt(a)) {
+            throw new Error('SUB_OVERFLOW');
+        }
+        return a.minus(b);
+    };
+    exports.sub = sub;
+    const max = (a, b) => {
+        return a.gte(b) ? a : b;
+    };
+    exports.max = max;
+    const min = (a, b) => {
+        return a.lt(b) ? a : b;
+    };
+    exports.min = min;
+    const mul = (a, b) => {
+        return a.times(b);
+    };
+    exports.mul = mul;
+    const div = (a, b, roundUp) => {
+        return roundUp ? (0, exports.divUp)(a, b) : (0, exports.divDown)(a, b);
+    };
+    exports.div = div;
+    const divDown = (a, b) => {
+        if (b.isZero()) {
+            throw new Error('ZERO_DIVISION');
+        }
+        return a.idiv(b);
+    };
+    exports.divDown = divDown;
+    const divUp = (a, b) => {
+        if (b.isZero()) {
+            throw new Error('ZERO_DIVISION');
+        }
+        return a.isZero()
+            ? exports.ZERO
+            : exports.ONE.plus(a.minus(exports.ONE).idiv(b));
+    };
+    exports.divUp = divUp;
+})(math$8);
+
+Object.defineProperty(base, '__esModule', { value: true });
+const big_number_1$4 = bigNumber;
+const math$7 = math$8;
+class BasePool {
+    // ---------------------- Constructor ----------------------
+    constructor(params) {
+        this.MIN_SWAP_FEE_PERCENTAGE = (0, big_number_1$4.bn)('0.000001'); // 0.0001%
+        this.MAX_SWAP_FEE_PERCENTAGE = (0, big_number_1$4.bn)('0.1'); // 10%
+        this._query = false;
+        this._id = params.id;
+        this._address = params.address;
+        this._bptTotalSupply = params.bptTotalSupply;
+        this.setSwapFeePercentage(params.swapFeePercentage);
+        if (params.query) {
+            this._query = params.query;
+        }
+    }
+    // ---------------------- Getters ----------------------
+    get id() {
+        return this._id;
+    }
+    get address() {
+        return this._address;
+    }
+    get bptTotalSupply() {
+        return this._bptTotalSupply;
+    }
+    get swapFeePercentage() {
+        return this._swapFeePercentage;
+    }
+    get query() {
+        return this._query;
+    }
+    // ---------------------- Setters ----------------------
+    setSwapFeePercentage(swapFeePercentage) {
+        if (
+            (0, big_number_1$4.bn)(swapFeePercentage).lt(
+                this.MIN_SWAP_FEE_PERCENTAGE
+            )
+        ) {
+            throw new Error('MIN_SWAP_FEE_PERCENTAGE');
+        }
+        if (
+            (0, big_number_1$4.bn)(swapFeePercentage).gt(
+                this.MAX_SWAP_FEE_PERCENTAGE
+            )
+        ) {
+            throw new Error('MAX_SWAP_FEE_PERCENTAGE');
+        }
+        this._swapFeePercentage = swapFeePercentage;
+    }
+    setQuery(query) {
+        this._query = query;
+    }
+    // ---------------------- Internal ----------------------
+    _upScale(amount, decimals) {
+        return math$7.mul(
+            (0, big_number_1$4.scale)(amount, decimals),
+            (0, big_number_1$4.bn)(10).pow(18 - decimals)
+        );
+    }
+    _downScaleDown(amount, decimals) {
+        return (0, big_number_1$4.scale)(
+            math$7.divDown(
+                (0, big_number_1$4.bn)(amount),
+                (0, big_number_1$4.bn)(10).pow(18 - decimals)
+            ),
+            -decimals
+        );
+    }
+    _downScaleUp(amount, decimals) {
+        return (0, big_number_1$4.scale)(
+            math$7.divUp(
+                (0, big_number_1$4.bn)(amount),
+                (0, big_number_1$4.bn)(10).pow(18 - decimals)
+            ),
+            -decimals
+        );
+    }
+}
+base.default = BasePool;
+
+var math$6 = {};
+
+var fixedPoint = {};
+
+var logExp = {};
+
+(function (exports) {
+    // Ported from Solidity:
+    // https://github.com/balancer-labs/balancer-core-v2/blob/70843e6a61ad11208c1cfabf5cfe15be216ca8d3/pkg/solidity-utils/contracts/math/LogExpMath.sol
+    Object.defineProperty(exports, '__esModule', { value: true });
+    exports.ln = exports.log = exports.exp = exports.pow = void 0;
+    const big_number_1 = bigNumber;
+    // All fixed point multiplications and divisions are inlined
+    // This means we need to divide by ONE when multiplying two numbers, and multiply by ONE when dividing them
+    // All arguments and return values are 18 decimal fixed point numbers
+    const ONE_18 = (0, big_number_1.bn)('1000000000000000000'); // 1e18
+    // Internally, intermediate values are computed with higher precision as 20 decimal fixed point numbers, and in the case of ln36, 36 decimals
+    const ONE_20 = (0, big_number_1.bn)('100000000000000000000'); // 1e20
+    const ONE_36 = (0, big_number_1.bn)(
+        '1000000000000000000000000000000000000'
+    ); // 1e36
+    // The domain of natural exponentiation is bound by the word size and number of decimals used
+    // Because internally the result will be stored using 20 decimals, the largest possible result is
+    // (2^255 - 1) / 10^20, which makes the largest exponent ln((2^255 - 1) / 10^20) = 130.700829182905140221
+    // The smallest possible result is 10^(-18), which makes largest negative argument
+    // ln(10^(-18)) = -41.446531673892822312.
+    // We use 130.0 and -41.0 to have some safety margin
+    const MAX_NATURAL_EXPONENT = (0, big_number_1.bn)('130000000000000000000'); // 130e18
+    const MIN_NATURAL_EXPONENT = (0, big_number_1.bn)('-41000000000000000000'); // (-41)e18
+    // Bounds for ln_36's argument
+    // Both ln(0.9) and ln(1.1) can be represented with 36 decimal places in a fixed point 256 bit integer
+    const LN_36_LOWER_BOUND = ONE_18.minus(
+        (0, big_number_1.bn)('100000000000000000')
+    ); // 1e18 - 1e17
+    const LN_36_UPPER_BOUND = ONE_18.plus(
+        (0, big_number_1.bn)('100000000000000000')
+    ); // 1e18 + 1e17
+    const MILD_EXPONENT_BOUND = (0, big_number_1.bn)(2).pow(254).idiv(ONE_20);
+    // 18 decimal constants
+    const x0 = (0, big_number_1.bn)('128000000000000000000'); // 2ˆ7
+    const a0 = (0, big_number_1.bn)(
+        '38877084059945950922200000000000000000000000000000000000'
+    ); // eˆ(x0) (no decimals)
+    const x1 = (0, big_number_1.bn)('64000000000000000000'); // 2ˆ6
+    const a1 = (0, big_number_1.bn)('6235149080811616882910000000'); // eˆ(x1) (no decimals)
+    // 20 decimal constants
+    const x2 = (0, big_number_1.bn)('3200000000000000000000'); // 2ˆ5
+    const a2 = (0, big_number_1.bn)('7896296018268069516100000000000000'); // eˆ(x2)
+    const x3 = (0, big_number_1.bn)('1600000000000000000000'); // 2ˆ4
+    const a3 = (0, big_number_1.bn)('888611052050787263676000000'); // eˆ(x3)
+    const x4 = (0, big_number_1.bn)('800000000000000000000'); // 2ˆ3
+    const a4 = (0, big_number_1.bn)('298095798704172827474000'); // eˆ(x4)
+    const x5 = (0, big_number_1.bn)('400000000000000000000'); // 2ˆ2
+    const a5 = (0, big_number_1.bn)('5459815003314423907810'); // eˆ(x5)
+    const x6 = (0, big_number_1.bn)('200000000000000000000'); // 2ˆ1
+    const a6 = (0, big_number_1.bn)('738905609893065022723'); // eˆ(x6)
+    const x7 = (0, big_number_1.bn)('100000000000000000000'); // 2ˆ0
+    const a7 = (0, big_number_1.bn)('271828182845904523536'); // eˆ(x7)
+    const x8 = (0, big_number_1.bn)('50000000000000000000'); // 2ˆ(-1)
+    const a8 = (0, big_number_1.bn)('164872127070012814685'); // eˆ(x8)
+    const x9 = (0, big_number_1.bn)('25000000000000000000'); // 2ˆ(-2)
+    const a9 = (0, big_number_1.bn)('128402541668774148407'); // eˆ(x9)
+    const x10 = (0, big_number_1.bn)('12500000000000000000'); // 2ˆ(-3)
+    const a10 = (0, big_number_1.bn)('113314845306682631683'); // eˆ(x10)
+    const x11 = (0, big_number_1.bn)('6250000000000000000'); // 2ˆ(-4)
+    const a11 = (0, big_number_1.bn)('106449445891785942956'); // eˆ(x11)
+    const pow = (x, y) => {
+        if (y.isZero()) {
+            // We solve the 0^0 indetermination by making it equal one.
+            return ONE_18;
+        }
+        if (x.isZero()) {
+            return (0, big_number_1.bn)(0);
+        }
+        // Instead of computing x^y directly, we instead rely on the properties of logarithms and exponentiation to
+        // arrive at that result. In particular, exp(ln(x)) = x, and ln(x^y) = y * ln(x). This means
+        // x^y = exp(y * ln(x)).
+        // The ln function takes a signed value, so we need to make sure x fits in the signed 256 bit range.
+        if (x.gte((0, big_number_1.bn)(2).pow(255))) {
+            throw new Error('X_OUT_OF_BOUNDS');
+        }
+        // We will compute y * ln(x) in a single step. Depending on the value of x, we can either use ln or ln_36. In
+        // both cases, we leave the division by ONE_18 (due to fixed point multiplication) to the end.
+        // This prevents y * ln(x) from overflowing, and at the same time guarantees y fits in the signed 256 bit range.
+        if (y.gte(MILD_EXPONENT_BOUND)) {
+            throw new Error('Y_OUT_OF_BOUNDS');
+        }
+        let logx_times_y;
+        if (LN_36_LOWER_BOUND.lt(x) && x.lt(LN_36_UPPER_BOUND)) {
+            let ln_36_x = _ln_36(x);
+            // ln_36_x has 36 decimal places, so multiplying by y_int256 isn't as straightforward, since we can't just
+            // bring y_int256 to 36 decimal places, as it might overflow. Instead, we perform two 18 decimal
+            // multiplications and add the results: one with the first 18 decimals of ln_36_x, and one with the
+            // (downscaled) last 18 decimals.
+            logx_times_y = ln_36_x
+                .idiv(ONE_18)
+                .times(y)
+                .plus(ln_36_x.mod(ONE_18).times(y).idiv(ONE_18));
+        } else {
+            logx_times_y = _ln(x).times(y);
+        }
+        logx_times_y = logx_times_y.idiv(ONE_18);
+        // Finally, we compute exp(y * ln(x)) to arrive at x^y
+        if (
+            logx_times_y.lt(MIN_NATURAL_EXPONENT) ||
+            logx_times_y.gt(MAX_NATURAL_EXPONENT)
+        ) {
+            throw new Error('PRODUCT_OUT_OF_BOUNDS');
+        }
+        return (0, exports.exp)(logx_times_y);
+    };
+    exports.pow = pow;
+    const exp = (x) => {
+        if (x.lt(MIN_NATURAL_EXPONENT) || x.gt(MAX_NATURAL_EXPONENT)) {
+            throw new Error('INVALID_EXPONENT');
+        }
+        if (x.lt(0)) {
+            // We only handle positive exponents: e^(-x) is computed as 1 / e^x. We can safely make x positive since it
+            // fits in the signed 256 bit range (as it is larger than MIN_NATURAL_EXPONENT).
+            // Fixed point division requires multiplying by ONE_18.
+            return ONE_18.times(ONE_18).idiv((0, exports.exp)(x.negated()));
+        }
+        // First, we use the fact that e^(x+y) = e^x * e^y to decompose x into a sum of powers of two, which we call x_n,
+        // where x_n == 2^(7 - n), and e^x_n = a_n has been precomputed. We choose the first x_n, x0, to equal 2^7
+        // because all larger powers are larger than MAX_NATURAL_EXPONENT, and therefore not present in the
+        // decomposition.
+        // At the end of this process we will have the product of all e^x_n = a_n that apply, and the remainder of this
+        // decomposition, which will be lower than the smallest x_n.
+        // exp(x) = k_0 * a_0 * k_1 * a_1 * ... + k_n * a_n * exp(remainder), where each k_n equals either 0 or 1.
+        // We mutate x by subtracting x_n, making it the remainder of the decomposition.
+        // The first two a_n (e^(2^7) and e^(2^6)) are too large if stored as 18 decimal numbers, and could cause
+        // intermediate overflows. Instead we store them as plain integers, with 0 decimals.
+        // Additionally, x0 + x1 is larger than MAX_NATURAL_EXPONENT, which means they will not both be present in the
+        // decomposition.
+        // For each x_n, we test if that term is present in the decomposition (if x is larger than it), and if so deduct
+        // it and compute the accumulated product.
+        let firstAN;
+        if (x.gte(x0)) {
+            x = x.minus(x0);
+            firstAN = a0;
+        } else if (x.gte(x1)) {
+            x = x.minus(x1);
+            firstAN = a1;
+        } else {
+            firstAN = (0, big_number_1.bn)(1); // One with no decimal places
+        }
+        // We now transform x into a 20 decimal fixed point number, to have enhanced precision when computing the
+        // smaller terms.
+        x = x.times(100);
+        // `product` is the accumulated product of all a_n (except a0 and a1), which starts at 20 decimal fixed point
+        // one. Recall that fixed point multiplication requires dividing by ONE_20.
+        let product = ONE_20;
+        if (x.gte(x2)) {
+            x = x.minus(x2);
+            product = product.times(a2).idiv(ONE_20);
+        }
+        if (x.gte(x3)) {
+            x = x.minus(x3);
+            product = product.times(a3).idiv(ONE_20);
+        }
+        if (x.gte(x4)) {
+            x = x.minus(x4);
+            product = product.times(a4).idiv(ONE_20);
+        }
+        if (x.gte(x5)) {
+            x = x.minus(x5);
+            product = product.times(a5).idiv(ONE_20);
+        }
+        if (x.gte(x6)) {
+            x = x.minus(x6);
+            product = product.times(a6).idiv(ONE_20);
+        }
+        if (x.gte(x7)) {
+            x = x.minus(x7);
+            product = product.times(a7).idiv(ONE_20);
+        }
+        if (x.gte(x8)) {
+            x = x.minus(x8);
+            product = product.times(a8).idiv(ONE_20);
+        }
+        if (x.gte(x9)) {
+            x = x.minus(x9);
+            product = product.times(a9).idiv(ONE_20);
+        }
+        // x10 and x11 are unnecessary here since we have high enough precision already.
+        // Now we need to compute e^x, where x is small (in particular, it is smaller than x9). We use the Taylor series
+        // expansion for e^x: 1 + x + (x^2 / 2!) + (x^3 / 3!) + ... + (x^n / n!).
+        let seriesSum = ONE_20; // The initial one in the sum, with 20 decimal places.
+        let term; // Each term in the sum, where the nth term is (x^n / n!).
+        // The first term is simply x.
+        term = x;
+        seriesSum = seriesSum.plus(term);
+        // Each term (x^n / n!) equals the previous one times x, divided by n. Since x is a fixed point number,
+        // multiplying by it requires dividing by ONE_20, but dividing by the non-fixed point n values does not.
+        term = term.times(x).idiv(ONE_20).idiv(2);
+        seriesSum = seriesSum.plus(term);
+        term = term.times(x).idiv(ONE_20).idiv(3);
+        seriesSum = seriesSum.plus(term);
+        term = term.times(x).idiv(ONE_20).idiv(4);
+        seriesSum = seriesSum.plus(term);
+        term = term.times(x).idiv(ONE_20).idiv(5);
+        seriesSum = seriesSum.plus(term);
+        term = term.times(x).idiv(ONE_20).idiv(6);
+        seriesSum = seriesSum.plus(term);
+        term = term.times(x).idiv(ONE_20).idiv(7);
+        seriesSum = seriesSum.plus(term);
+        term = term.times(x).idiv(ONE_20).idiv(8);
+        seriesSum = seriesSum.plus(term);
+        term = term.times(x).idiv(ONE_20).idiv(9);
+        seriesSum = seriesSum.plus(term);
+        term = term.times(x).idiv(ONE_20).idiv(10);
+        seriesSum = seriesSum.plus(term);
+        term = term.times(x).idiv(ONE_20).idiv(11);
+        seriesSum = seriesSum.plus(term);
+        term = term.times(x).idiv(ONE_20).idiv(12);
+        seriesSum = seriesSum.plus(term);
+        // 12 Taylor terms are sufficient for 18 decimal precision.
+        // We now have the first a_n (with no decimals), and the product of all other a_n present, and the Taylor
+        // approximation of the exponentiation of the remainder (both with 20 decimals). All that remains is to multiply
+        // all three (one 20 decimal fixed point multiplication, dividing by ONE_20, and one integer multiplication),
+        // and then drop two digits to return an 18 decimal value.
+        return product.times(seriesSum).idiv(ONE_20).times(firstAN).idiv(100);
+    };
+    exports.exp = exp;
+    const log = (arg, base) => {
+        // This performs a simple base change: log(arg, base) = ln(arg) / ln(base).
+        // Both logBase and logArg are computed as 36 decimal fixed point numbers, either by using ln_36, or by
+        // upscaling.
+        let logBase;
+        if (LN_36_LOWER_BOUND.lt(base) && base.lt(LN_36_UPPER_BOUND)) {
+            logBase = _ln_36(base);
+        } else {
+            logBase = _ln(base).times(ONE_18);
+        }
+        let logArg;
+        if (LN_36_LOWER_BOUND.lt(arg) && arg.lt(LN_36_UPPER_BOUND)) {
+            logArg = _ln_36(arg);
+        } else {
+            logArg = _ln(arg).times(ONE_18);
+        }
+        // When dividing, we multiply by ONE_18 to arrive at a result with 18 decimal places
+        return logArg.times(ONE_18).idiv(logBase);
+    };
+    exports.log = log;
+    const ln = (a) => {
+        // The real natural logarithm is not defined for negative numbers or zero.
+        if (a.lte(0)) {
+            throw new Error('OUT_OF_BOUNDS');
+        }
+        if (LN_36_LOWER_BOUND.lt(a) && a.lt(LN_36_UPPER_BOUND)) {
+            return _ln_36(a).idiv(ONE_18);
+        } else {
+            return _ln(a);
+        }
+    };
+    exports.ln = ln;
+    const _ln = (a) => {
+        if (a.lt(ONE_18)) {
+            // Since ln(a^k) = k * ln(a), we can compute ln(a) as ln(a) = ln((1/a)^(-1)) = - ln((1/a))
+            // If a is less than one, 1/a will be greater than one, and this if statement will not be entered in the recursive call
+            // Fixed point division requires multiplying by ONE_18
+            return _ln(ONE_18.times(ONE_18).idiv(a)).negated();
+        }
+        // First, we use the fact that ln^(a * b) = ln(a) + ln(b) to decompose ln(a) into a sum of powers of two, which
+        // we call x_n, where x_n == 2^(7 - n), which are the natural logarithm of precomputed quantities a_n (that is,
+        // ln(a_n) = x_n). We choose the first x_n, x0, to equal 2^7 because the exponential of all larger powers cannot
+        // be represented as 18 fixed point decimal numbers in 256 bits, and are therefore larger than a.
+        // At the end of this process we will have the sum of all x_n = ln(a_n) that apply, and the remainder of this
+        // decomposition, which will be lower than the smallest a_n.
+        // ln(a) = k_0 * x_0 + k_1 * x_1 + ... + k_n * x_n + ln(remainder), where each k_n equals either 0 or 1
+        // We mutate a by subtracting a_n, making it the remainder of the decomposition
+        // For reasons related to how `exp` works, the first two a_n (e^(2^7) and e^(2^6)) are not stored as fixed point
+        // numbers with 18 decimals, but instead as plain integers with 0 decimals, so we need to multiply them by
+        // ONE_18 to convert them to fixed point.
+        // For each a_n, we test if that term is present in the decomposition (if a is larger than it), and if so divide
+        // by it and compute the accumulated sum.
+        let sum = (0, big_number_1.bn)(0);
+        if (a.gte(a0.times(ONE_18))) {
+            a = a.idiv(a0); // Integer, not fixed point division
+            sum = sum.plus(x0);
+        }
+        if (a.gte(a1.times(ONE_18))) {
+            a = a.idiv(a1); // Integer, not fixed point division
+            sum = sum.plus(x1);
+        }
+        // All other a_n and x_n are stored as 20 digit fixed point numbers, so we convert the sum and a to this format.
+        sum = sum.times(100);
+        a = a.times(100);
+        // Because further a_n are  20 digit fixed point numbers, we multiply by ONE_20 when dividing by them.
+        if (a.gte(a2)) {
+            a = a.times(ONE_20).idiv(a2);
+            sum = sum.plus(x2);
+        }
+        if (a.gte(a3)) {
+            a = a.times(ONE_20).idiv(a3);
+            sum = sum.plus(x3);
+        }
+        if (a.gte(a4)) {
+            a = a.times(ONE_20).idiv(a4);
+            sum = sum.plus(x4);
+        }
+        if (a.gte(a5)) {
+            a = a.times(ONE_20).idiv(a5);
+            sum = sum.plus(x5);
+        }
+        if (a.gte(a6)) {
+            a = a.times(ONE_20).idiv(a6);
+            sum = sum.plus(x6);
+        }
+        if (a.gte(a7)) {
+            a = a.times(ONE_20).idiv(a7);
+            sum = sum.plus(x7);
+        }
+        if (a.gte(a8)) {
+            a = a.times(ONE_20).idiv(a8);
+            sum = sum.plus(x8);
+        }
+        if (a.gte(a9)) {
+            a = a.times(ONE_20).idiv(a9);
+            sum = sum.plus(x9);
+        }
+        if (a.gte(a10)) {
+            a = a.times(ONE_20).idiv(a10);
+            sum = sum.plus(x10);
+        }
+        if (a.gte(a11)) {
+            a = a.times(ONE_20).idiv(a11);
+            sum = sum.plus(x11);
+        }
+        // a is now a small number (smaller than a_11, which roughly equals 1.06). This means we can use a Taylor series
+        // that converges rapidly for values of `a` close to one - the same one used in ln_36.
+        // Let z = (a - 1) / (a + 1).
+        // ln(a) = 2 * (z + z^3 / 3 + z^5 / 5 + z^7 / 7 + ... + z^(2 * n + 1) / (2 * n + 1))
+        // Recall that 20 digit fixed point division requires multiplying by ONE_20, and multiplication requires
+        // division by ONE_20.
+        const z = a.minus(ONE_20).times(ONE_20).idiv(a.plus(ONE_20));
+        const z_squared = z.times(z).idiv(ONE_20);
+        // num is the numerator of the series: the z^(2 * n + 1) term
+        let num = z;
+        // seriesSum holds the accumulated sum of each term in the series, starting with the initial z
+        let seriesSum = num;
+        // In each step, the numerator is multiplied by z^2
+        num = num.times(z_squared).idiv(ONE_20);
+        seriesSum = seriesSum.plus(num.idiv(3));
+        num = num.times(z_squared).idiv(ONE_20);
+        seriesSum = seriesSum.plus(num.idiv(5));
+        num = num.times(z_squared).idiv(ONE_20);
+        seriesSum = seriesSum.plus(num.idiv(7));
+        num = num.times(z_squared).idiv(ONE_20);
+        seriesSum = seriesSum.plus(num.idiv(9));
+        num = num.times(z_squared).idiv(ONE_20);
+        seriesSum = seriesSum.plus(num.idiv(11));
+        // 6 Taylor terms are sufficient for 36 decimal precision.
+        // Finally, we multiply by 2 (non fixed point) to compute ln(remainder)
+        seriesSum = seriesSum.times(2);
+        // We now have the sum of all x_n present, and the Taylor approximation of the logarithm of the remainder (both
+        // with 20 decimals). All that remains is to sum these two, and then drop two digits to return a 18 decimal
+        // value.
+        return sum.plus(seriesSum).idiv(100);
+    };
+    const _ln_36 = (x) => {
+        // Since ln(1) = 0, a value of x close to one will yield a very small result, which makes using 36 digits worthwhile
+        // First, we transform x to a 36 digit fixed point value
+        x = x.times(ONE_18);
+        // We will use the following Taylor expansion, which converges very rapidly. Let z = (x - 1) / (x + 1)
+        // ln(x) = 2 * (z + z^3 / 3 + z^5 / 5 + z^7 / 7 + ... + z^(2 * n + 1) / (2 * n + 1))
+        // Recall that 36 digit fixed point division requires multiplying by ONE_36, and multiplication requires division by ONE_36
+        const z = x.minus(ONE_36).times(ONE_36).idiv(x.plus(ONE_36));
+        const z_squared = z.times(z).idiv(ONE_36);
+        // num is the numerator of the series: the z^(2 * n + 1) term
+        let num = z;
+        // seriesSum holds the accumulated sum of each term in the series, starting with the initial z
+        let seriesSum = num;
+        // In each step, the numerator is multiplied by z^2
+        num = num.times(z_squared).idiv(ONE_36);
+        seriesSum = seriesSum.plus(num.idiv(3));
+        num = num.times(z_squared).idiv(ONE_36);
+        seriesSum = seriesSum.plus(num.idiv(5));
+        num = num.times(z_squared).idiv(ONE_36);
+        seriesSum = seriesSum.plus(num.idiv(7));
+        num = num.times(z_squared).idiv(ONE_36);
+        seriesSum = seriesSum.plus(num.idiv(9));
+        num = num.times(z_squared).idiv(ONE_36);
+        seriesSum = seriesSum.plus(num.idiv(11));
+        num = num.times(z_squared).idiv(ONE_36);
+        seriesSum = seriesSum.plus(num.idiv(13));
+        num = num.times(z_squared).idiv(ONE_36);
+        seriesSum = seriesSum.plus(num.idiv(15));
+        // 8 Taylor terms are sufficient for 36 decimal precision
+        // All that remains is multiplying by 2 (non fixed point)
+        return seriesSum.times(2);
+    };
+})(logExp);
+
+(function (exports) {
+    // Ported from Solidity:
+    // https://github.com/balancer-labs/balancer-core-v2/blob/70843e6a61ad11208c1cfabf5cfe15be216ca8d3/pkg/solidity-utils/contracts/math/FixedPoint.sol
+    Object.defineProperty(exports, '__esModule', { value: true });
+    exports.complement =
+        exports.powUp =
+        exports.powDown =
+        exports.divUp =
+        exports.divDown =
+        exports.mulUp =
+        exports.mulDown =
+        exports.sub =
+        exports.add =
+        exports.MIN_POW_BASE_FREE_EXPONENT =
+        exports.MAX_POW_RELATIVE_ERROR =
+        exports.ONE =
+        exports.ZERO =
+            void 0;
+    const big_number_1 = bigNumber;
+    const logExp$1 = logExp;
+    exports.ZERO = (0, big_number_1.bn)(0);
+    exports.ONE = (0, big_number_1.bn)('1000000000000000000'); // 10^18
+    exports.MAX_POW_RELATIVE_ERROR = (0, big_number_1.bn)(10000); // 10^(-14)
+    // Minimum base for the power function when the exponent is 'free' (larger than ONE)
+    exports.MIN_POW_BASE_FREE_EXPONENT = (0, big_number_1.bn)(
+        '700000000000000000'
+    ); // 0.7e18
+    const add = (a, b) => {
+        // Fixed Point addition is the same as regular checked addition
+        return a.plus(b);
+    };
+    exports.add = add;
+    const sub = (a, b) => {
+        // Fixed Point subtraction is the same as regular checked subtraction
+        if (b.gt(a)) {
+            throw new Error('SUB_OVERFLOW');
+        }
+        return a.minus(b);
+    };
+    exports.sub = sub;
+    const mulDown = (a, b) => {
+        return a.times(b).idiv(exports.ONE);
+    };
+    exports.mulDown = mulDown;
+    const mulUp = (a, b) => {
+        const product = a.times(b);
+        if (product.isZero()) {
+            return product;
+        } else {
+            // The traditional divUp formula is:
+            // divUp(x, y) := (x + y - 1) / y
+            // To avoid intermediate overflow in the addition, we distribute the division and get:
+            // divUp(x, y) := (x - 1) / y + 1
+            // Note that this requires x != 0, which we already tested for
+            return product
+                .minus((0, big_number_1.bn)(1))
+                .idiv(exports.ONE)
+                .plus((0, big_number_1.bn)(1));
+        }
+    };
+    exports.mulUp = mulUp;
+    const divDown = (a, b) => {
+        if (b.isZero()) {
+            throw new Error('ZERO_DIVISION');
+        }
+        if (a.isZero()) {
+            return a;
+        } else {
+            return a.times(exports.ONE).idiv(b);
+        }
+    };
+    exports.divDown = divDown;
+    const divUp = (a, b) => {
+        if (b.isZero()) {
+            throw new Error('ZERO_DIVISION');
+        }
+        if (a.isZero()) {
+            return a;
+        } else {
+            // The traditional divUp formula is:
+            // divUp(x, y) := (x + y - 1) / y
+            // To avoid intermediate overflow in the addition, we distribute the division and get:
+            // divUp(x, y) := (x - 1) / y + 1
+            // Note that this requires x != 0, which we already tested for.
+            return a
+                .times(exports.ONE)
+                .minus((0, big_number_1.bn)(1))
+                .idiv(b)
+                .plus((0, big_number_1.bn)(1));
+        }
+    };
+    exports.divUp = divUp;
+    const powDown = (x, y) => {
+        const raw = logExp$1.pow(x, y);
+        const maxError = (0, exports.add)(
+            (0, exports.mulUp)(raw, exports.MAX_POW_RELATIVE_ERROR),
+            (0, big_number_1.bn)(1)
+        );
+        if (raw.lt(maxError)) {
+            return (0, big_number_1.bn)(0);
+        } else {
+            return (0, exports.sub)(raw, maxError);
+        }
+    };
+    exports.powDown = powDown;
+    const powUp = (x, y) => {
+        const raw = logExp$1.pow(x, y);
+        const maxError = (0, exports.add)(
+            (0, exports.mulUp)(raw, exports.MAX_POW_RELATIVE_ERROR),
+            (0, big_number_1.bn)(1)
+        );
+        return (0, exports.add)(raw, maxError);
+    };
+    exports.powUp = powUp;
+    const complement = (x) => {
+        return x.lt(exports.ONE)
+            ? exports.ONE.minus(x)
+            : (0, big_number_1.bn)(0);
+    };
+    exports.complement = complement;
+})(fixedPoint);
+
+// Ported from Solidity:
+// // https://github.com/balancer-labs/balancer-v2-monorepo/blob/589542001aeca5bdc120404874fe0137f6a4c749/pkg/pool-linear/contracts/LinearMath.sol
+Object.defineProperty(math$6, '__esModule', { value: true });
+math$6._calcWrappedOutPerBptIn =
+    math$6._calcWrappedInPerBptOut =
+    math$6._calcBptInPerWrappedOut =
+    math$6._calcBptOutPerWrappedIn =
+    math$6._calcMainInPerWrappedOut =
+    math$6._calcMainOutPerWrappedIn =
+    math$6._calcMainOutPerBptIn =
+    math$6._calcMainInPerBptOut =
+    math$6._calcWrappedInPerMainOut =
+    math$6._calcWrappedOutPerMainIn =
+    math$6._calcBptInPerMainOut =
+    math$6._calcBptOutPerMainIn =
+        void 0;
+const fp$1 = fixedPoint;
+const math$5 = math$8;
+const _calcBptOutPerMainIn = (
+    mainIn,
+    mainBalance,
+    wrappedBalance,
+    bptSupply,
+    params
+) => {
+    // Amount out, so we round down overall.
+    if (bptSupply.isZero()) {
+        return _toNominal(mainIn, params);
+    }
+    const previousNominalMain = _toNominal(mainBalance, params);
+    const afterNominalMain = _toNominal(fp$1.add(mainBalance, mainIn), params);
+    const deltaNominalMain = fp$1.sub(afterNominalMain, previousNominalMain);
+    const invariant = _calcInvariantUp(
+        previousNominalMain,
+        wrappedBalance,
+        params
+    );
+    return fp$1.divDown(fp$1.mulDown(bptSupply, deltaNominalMain), invariant);
+};
+math$6._calcBptOutPerMainIn = _calcBptOutPerMainIn;
+const _calcBptInPerMainOut = (
+    mainOut,
+    mainBalance,
+    wrappedBalance,
+    bptSupply,
+    params
+) => {
+    // Amount in, so we round up overall.
+    const previousNominalMain = _toNominal(mainBalance, params);
+    const afterNominalMain = _toNominal(fp$1.sub(mainBalance, mainOut), params);
+    const deltaNominalMain = fp$1.sub(previousNominalMain, afterNominalMain);
+    const invariant = _calcInvariantDown(
+        previousNominalMain,
+        wrappedBalance,
+        params
+    );
+    return fp$1.divUp(fp$1.mulUp(bptSupply, deltaNominalMain), invariant);
+};
+math$6._calcBptInPerMainOut = _calcBptInPerMainOut;
+const _calcWrappedOutPerMainIn = (mainIn, mainBalance, params) => {
+    // Amount out, so we round down overall.
+    const previousNominalMain = _toNominal(mainBalance, params);
+    const afterNominalMain = _toNominal(fp$1.add(mainBalance, mainIn), params);
+    const deltaNominalMain = fp$1.sub(afterNominalMain, previousNominalMain);
+    return fp$1.divDown(deltaNominalMain, params.rate);
+};
+math$6._calcWrappedOutPerMainIn = _calcWrappedOutPerMainIn;
+const _calcWrappedInPerMainOut = (mainOut, mainBalance, params) => {
+    // Amount in, so we round up overall.
+    const previousNominalMain = _toNominal(mainBalance, params);
+    const afterNominalMain = _toNominal(fp$1.sub(mainBalance, mainOut), params);
+    const deltaNominalMain = fp$1.sub(previousNominalMain, afterNominalMain);
+    return fp$1.divUp(deltaNominalMain, params.rate);
+};
+math$6._calcWrappedInPerMainOut = _calcWrappedInPerMainOut;
+const _calcMainInPerBptOut = (
+    bptOut,
+    mainBalance,
+    wrappedBalance,
+    bptSupply,
+    params
+) => {
+    // Amount in, so we round up overall.
+    if (bptSupply.isZero()) {
+        return _fromNominal(bptOut, params);
+    }
+    const previousNominalMain = _toNominal(mainBalance, params);
+    const invariant = _calcInvariantUp(
+        previousNominalMain,
+        wrappedBalance,
+        params
+    );
+    const deltaNominalMain = fp$1.divUp(
+        fp$1.mulUp(invariant, bptOut),
+        bptSupply
+    );
+    const afterNominalMain = fp$1.add(previousNominalMain, deltaNominalMain);
+    const newMainBalance = _fromNominal(afterNominalMain, params);
+    return fp$1.sub(newMainBalance, mainBalance);
+};
+math$6._calcMainInPerBptOut = _calcMainInPerBptOut;
+const _calcMainOutPerBptIn = (
+    bptIn,
+    mainBalance,
+    wrappedBalance,
+    bptSupply,
+    params
+) => {
+    // Amount out, so we round down overall.
+    const previousNominalMain = _toNominal(mainBalance, params);
+    const invariant = _calcInvariantDown(
+        previousNominalMain,
+        wrappedBalance,
+        params
+    );
+    const deltaNominalMain = fp$1.divDown(
+        fp$1.mulDown(invariant, bptIn),
+        bptSupply
+    );
+    const afterNominalMain = fp$1.sub(previousNominalMain, deltaNominalMain);
+    const newMainBalance = _fromNominal(afterNominalMain, params);
+    return fp$1.sub(mainBalance, newMainBalance);
+};
+math$6._calcMainOutPerBptIn = _calcMainOutPerBptIn;
+const _calcMainOutPerWrappedIn = (wrappedIn, mainBalance, params) => {
+    // Amount out, so we round down overall.
+    const previousNominalMain = _toNominal(mainBalance, params);
+    const deltaNominalMain = fp$1.mulDown(wrappedIn, params.rate);
+    const afterNominalMain = fp$1.sub(previousNominalMain, deltaNominalMain);
+    const newMainBalance = _fromNominal(afterNominalMain, params);
+    return fp$1.sub(mainBalance, newMainBalance);
+};
+math$6._calcMainOutPerWrappedIn = _calcMainOutPerWrappedIn;
+const _calcMainInPerWrappedOut = (wrappedOut, mainBalance, params) => {
+    // Amount in, so we round up overall.
+    const previousNominalMain = _toNominal(mainBalance, params);
+    const deltaNominalMain = fp$1.mulUp(wrappedOut, params.rate);
+    const afterNominalMain = fp$1.add(previousNominalMain, deltaNominalMain);
+    const newMainBalance = _fromNominal(afterNominalMain, params);
+    return fp$1.sub(newMainBalance, mainBalance);
+};
+math$6._calcMainInPerWrappedOut = _calcMainInPerWrappedOut;
+const _calcBptOutPerWrappedIn = (
+    wrappedIn,
+    mainBalance,
+    wrappedBalance,
+    bptSupply,
+    params
+) => {
+    // Amount out, so we round down overall.
+    if (bptSupply.isZero()) {
+        // Return nominal DAI
+        return fp$1.mulDown(wrappedIn, params.rate);
+    }
+    const nominalMain = _toNominal(mainBalance, params);
+    const previousInvariant = _calcInvariantUp(
+        nominalMain,
+        wrappedBalance,
+        params
+    );
+    const newWrappedBalance = fp$1.add(wrappedBalance, wrappedIn);
+    const newInvariant = _calcInvariantDown(
+        nominalMain,
+        newWrappedBalance,
+        params
+    );
+    const newBptBalance = fp$1.divDown(
+        fp$1.mulDown(bptSupply, newInvariant),
+        previousInvariant
+    );
+    return fp$1.sub(newBptBalance, bptSupply);
+};
+math$6._calcBptOutPerWrappedIn = _calcBptOutPerWrappedIn;
+const _calcBptInPerWrappedOut = (
+    wrappedOut,
+    mainBalance,
+    wrappedBalance,
+    bptSupply,
+    params
+) => {
+    // Amount in, so we round up overall.
+    const nominalMain = _toNominal(mainBalance, params);
+    const previousInvariant = _calcInvariantUp(
+        nominalMain,
+        wrappedBalance,
+        params
+    );
+    const newWrappedBalance = fp$1.sub(wrappedBalance, wrappedOut);
+    const newInvariant = _calcInvariantDown(
+        nominalMain,
+        newWrappedBalance,
+        params
+    );
+    const newBptBalance = fp$1.divDown(
+        fp$1.mulDown(bptSupply, newInvariant),
+        previousInvariant
+    );
+    return fp$1.sub(bptSupply, newBptBalance);
+};
+math$6._calcBptInPerWrappedOut = _calcBptInPerWrappedOut;
+const _calcWrappedInPerBptOut = (
+    bptOut,
+    mainBalance,
+    wrappedBalance,
+    bptSupply,
+    params
+) => {
+    // Amount in, so we round up overall.
+    if (bptSupply.isZero()) {
+        // Return nominal DAI
+        return fp$1.divUp(bptOut, params.rate);
+    }
+    const nominalMain = _toNominal(mainBalance, params);
+    const previousInvariant = _calcInvariantUp(
+        nominalMain,
+        wrappedBalance,
+        params
+    );
+    const newBptBalance = fp$1.add(bptSupply, bptOut);
+    const newWrappedBalance = fp$1.divUp(
+        fp$1.sub(
+            fp$1.mulUp(fp$1.divUp(newBptBalance, bptSupply), previousInvariant),
+            nominalMain
+        ),
+        params.rate
+    );
+    return fp$1.sub(newWrappedBalance, wrappedBalance);
+};
+math$6._calcWrappedInPerBptOut = _calcWrappedInPerBptOut;
+const _calcWrappedOutPerBptIn = (
+    bptIn,
+    mainBalance,
+    wrappedBalance,
+    bptSupply,
+    params
+) => {
+    // Amount out, so we round down overall.
+    const nominalMain = _toNominal(mainBalance, params);
+    const previousInvariant = _calcInvariantUp(
+        nominalMain,
+        wrappedBalance,
+        params
+    );
+    const newBptBalance = fp$1.sub(bptSupply, bptIn);
+    const newWrappedBalance = fp$1.divUp(
+        fp$1.sub(
+            fp$1.mulUp(fp$1.divUp(newBptBalance, bptSupply), previousInvariant),
+            nominalMain
+        ),
+        params.rate
+    );
+    return fp$1.sub(wrappedBalance, newWrappedBalance);
+};
+math$6._calcWrappedOutPerBptIn = _calcWrappedOutPerBptIn;
+const _calcInvariantUp = (nominalMainBalance, wrappedBalance, params) => {
+    return fp$1.add(
+        nominalMainBalance,
+        fp$1.mulUp(wrappedBalance, params.rate)
+    );
+};
+const _calcInvariantDown = (nominalMainBalance, wrappedBalance, params) => {
+    return fp$1.add(
+        nominalMainBalance,
+        fp$1.mulDown(wrappedBalance, params.rate)
+    );
+};
+const _toNominal = (amount, params) => {
+    if (
+        amount.lt(
+            fp$1.mulUp(math$5.sub(fp$1.ONE, params.fee), params.lowerTarget)
+        )
+    ) {
+        return fp$1.divUp(amount, math$5.sub(fp$1.ONE, params.fee));
+    } else if (
+        amount.lt(
+            math$5.sub(
+                params.upperTarget,
+                fp$1.mulUp(params.fee, params.lowerTarget)
+            )
+        )
+    ) {
+        return fp$1.add(amount, fp$1.mulUp(params.fee, params.lowerTarget));
+    } else {
+        return fp$1.divUp(
+            fp$1.add(
+                amount,
+                fp$1.mulUp(
+                    math$5.add(params.lowerTarget, params.upperTarget),
+                    params.fee
+                )
+            ),
+            math$5.add(fp$1.ONE, params.fee)
+        );
+    }
+};
+const _fromNominal = (nominal, params) => {
+    if (nominal.lt(params.lowerTarget)) {
+        return fp$1.mulUp(nominal, math$5.sub(fp$1.ONE, params.fee));
+    } else if (nominal.lt(params.upperTarget)) {
+        return fp$1.sub(nominal, fp$1.mulUp(params.fee, params.lowerTarget));
+    } else {
+        return fp$1.sub(
+            fp$1.mulUp(nominal, math$5.add(fp$1.ONE, params.fee)),
+            fp$1.mulUp(
+                params.fee,
+                math$5.add(params.lowerTarget, params.upperTarget)
+            )
+        );
+    }
+};
+
+Object.defineProperty(linear, '__esModule', { value: true });
+const big_number_1$3 = bigNumber;
+const base_1$2 = base;
+const math$4 = math$6;
+class LinearPool extends base_1$2.default {
+    // ---------------------- Constructor ----------------------
+    constructor(params) {
+        super(params);
+        this.MAX_TOKEN_BALANCE = (0, big_number_1$3.bn)(2).pow(112).minus(1);
+        this._mainToken = params.mainToken;
+        this._wrappedToken = params.wrappedToken;
+        this._bptToken = {
+            address: params.address,
+            symbol: 'BPT',
+            balance: '0',
+            decimals: 18,
+        };
+        if ((0, big_number_1$3.bn)(params.lowerTarget).gt(params.upperTarget)) {
+            throw new Error('LOWER_GREATER_THAN_UPPER_TARGET');
+        }
+        if (
+            (0, big_number_1$3.bn)(params.upperTarget).gt(
+                this.MAX_TOKEN_BALANCE
+            )
+        ) {
+            throw new Error('UPPER_TARGET_TOO_HIGH');
+        }
+        this._lowerTarget = params.lowerTarget;
+        this._upperTarget = params.upperTarget;
+    }
+    // ---------------------- Getters ----------------------
+    get tokens() {
+        return [this._mainToken, this._wrappedToken, this._bptToken];
+    }
+    get lowerTarget() {
+        return this._lowerTarget;
+    }
+    get upperTarget() {
+        return this._upperTarget;
+    }
+    // ---------------------- Swap actions ----------------------
+    swapGivenIn(tokenInSymbol, tokenOutSymbol, amountIn) {
+        const tokenIndexIn = this.tokens.findIndex(
+            (t) => t.symbol === tokenInSymbol
+        );
+        const tokenIndexOut = this.tokens.findIndex(
+            (t) => t.symbol === tokenOutSymbol
+        );
+        const tokenIn = this.tokens[tokenIndexIn];
+        const tokenOut = this.tokens[tokenIndexOut];
+        let scaledAmountOut;
+        if (tokenIn.symbol === this._bptToken.symbol) {
+            if (tokenOut.symbol === this._mainToken.symbol) {
+                scaledAmountOut = math$4._calcMainOutPerBptIn(
+                    this._upScale(amountIn, tokenIn.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    this._upScale(
+                        this._wrappedToken.balance,
+                        this._wrappedToken.decimals
+                    ),
+                    // MAX_TOKEN_BALANCE is always greater than BPT balance
+                    this.MAX_TOKEN_BALANCE.minus(this._bptToken.balance),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else if (tokenOut.symbol === this._wrappedToken.symbol) {
+                scaledAmountOut = math$4._calcWrappedOutPerBptIn(
+                    this._upScale(amountIn, tokenIn.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    this._upScale(
+                        this._wrappedToken.balance,
+                        this._wrappedToken.decimals
+                    ),
+                    // MAX_TOKEN_BALANCE is always greater than BPT balance
+                    this.MAX_TOKEN_BALANCE.minus(this._bptToken.balance),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else {
+                throw new Error('INVALID_TOKEN');
+            }
+        } else if (tokenIn.symbol === this._mainToken.symbol) {
+            if (tokenOut.symbol === this._wrappedToken.symbol) {
+                scaledAmountOut = math$4._calcWrappedOutPerMainIn(
+                    this._upScale(amountIn, tokenIn.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else if (tokenOut.symbol === this._bptToken.symbol) {
+                scaledAmountOut = math$4._calcBptOutPerMainIn(
+                    this._upScale(amountIn, tokenIn.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    this._upScale(
+                        this._wrappedToken.balance,
+                        this._wrappedToken.decimals
+                    ),
+                    // MAX_TOKEN_BALANCE is always greater than BPT balance
+                    this.MAX_TOKEN_BALANCE.minus(this._bptToken.balance),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else {
+                throw new Error('INVALID_TOKEN');
+            }
+        } else if (tokenIn.symbol === this._wrappedToken.symbol) {
+            if (tokenOut.symbol === this._mainToken.symbol) {
+                scaledAmountOut = math$4._calcMainOutPerWrappedIn(
+                    this._upScale(amountIn, tokenIn.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else if (tokenOut.symbol === this._bptToken.symbol) {
+                scaledAmountOut = math$4._calcBptOutPerWrappedIn(
+                    this._upScale(amountIn, tokenIn.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    this._upScale(
+                        this._wrappedToken.balance,
+                        this._wrappedToken.decimals
+                    ),
+                    // MAX_TOKEN_BALANCE is always greater than BPT balance
+                    this.MAX_TOKEN_BALANCE.minus(this._bptToken.balance),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else {
+                throw new Error('INVALID_TOKEN');
+            }
+        } else {
+            throw new Error('INVALID_TOKEN');
+        }
+        const amountOut = this._downScaleDown(
+            scaledAmountOut,
+            tokenOut.decimals
+        );
+        // In-place balance updates
+        if (!this._query) {
+            tokenIn.balance = (0, big_number_1$3.bn)(tokenIn.balance)
+                .plus(amountIn)
+                .toString();
+            tokenOut.balance = (0, big_number_1$3.bn)(tokenOut.balance)
+                .minus(amountOut)
+                .toString();
+        }
+        return amountOut.toString();
+    }
+    swapGivenOut(tokenInSymbol, tokenOutSymbol, amountOut) {
+        const tokenIndexIn = this.tokens.findIndex(
+            (t) => t.symbol === tokenInSymbol
+        );
+        const tokenIndexOut = this.tokens.findIndex(
+            (t) => t.symbol === tokenOutSymbol
+        );
+        const tokenIn = this.tokens[tokenIndexIn];
+        const tokenOut = this.tokens[tokenIndexOut];
+        let scaledAmountIn;
+        if (tokenOut.symbol === this._bptToken.symbol) {
+            if (tokenIn.symbol === this._mainToken.symbol) {
+                scaledAmountIn = math$4._calcMainInPerBptOut(
+                    this._upScale(amountOut, tokenOut.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    this._upScale(
+                        this._wrappedToken.balance,
+                        this._wrappedToken.decimals
+                    ),
+                    // MAX_TOKEN_BALANCE is always greater than BPT balance
+                    this.MAX_TOKEN_BALANCE.minus(this._bptToken.balance),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else if (tokenIn.symbol === this._wrappedToken.symbol) {
+                scaledAmountIn = math$4._calcWrappedInPerBptOut(
+                    this._upScale(amountOut, tokenOut.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    this._upScale(
+                        this._wrappedToken.balance,
+                        this._wrappedToken.decimals
+                    ),
+                    // MAX_TOKEN_BALANCE is always greater than BPT balance
+                    this.MAX_TOKEN_BALANCE.minus(this._bptToken.balance),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else {
+                throw new Error('INVALID_TOKEN');
+            }
+        } else if (tokenOut.symbol === this._mainToken.symbol) {
+            if (tokenIn.symbol === this._wrappedToken.symbol) {
+                scaledAmountIn = math$4._calcWrappedInPerMainOut(
+                    this._upScale(amountOut, tokenOut.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else if (tokenIn.symbol === this._bptToken.symbol) {
+                scaledAmountIn = math$4._calcBptInPerMainOut(
+                    this._upScale(amountOut, tokenOut.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    this._upScale(
+                        this._wrappedToken.balance,
+                        this._wrappedToken.decimals
+                    ),
+                    // MAX_TOKEN_BALANCE is always greater than BPT balance
+                    this.MAX_TOKEN_BALANCE.minus(this._bptToken.balance),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else {
+                throw new Error('INVALID_TOKEN');
+            }
+        } else if (tokenOut.symbol === this._wrappedToken.symbol) {
+            if (tokenIn.symbol === this._mainToken.symbol) {
+                scaledAmountIn = math$4._calcMainInPerWrappedOut(
+                    this._upScale(amountOut, tokenOut.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else if (tokenIn.symbol === this._bptToken.symbol) {
+                scaledAmountIn = math$4._calcBptInPerWrappedOut(
+                    this._upScale(amountOut, tokenOut.decimals),
+                    this._upScale(
+                        this._mainToken.balance,
+                        this._mainToken.decimals
+                    ),
+                    this._upScale(
+                        this._wrappedToken.balance,
+                        this._wrappedToken.decimals
+                    ),
+                    // MAX_TOKEN_BALANCE is always greater than BPT balance
+                    this.MAX_TOKEN_BALANCE.minus(this._bptToken.balance),
+                    {
+                        fee: this._upScale(this._swapFeePercentage, 18),
+                        rate: this._upScale('1', 18),
+                        lowerTarget: this._upScale(this._lowerTarget, 18),
+                        upperTarget: this._upScale(this._upperTarget, 18),
+                    }
+                );
+            } else {
+                throw new Error('INVALID_TOKEN');
+            }
+        } else {
+            throw new Error('INVALID_TOKEN');
+        }
+        const amountIn = this._downScaleUp(scaledAmountIn, tokenIn.decimals);
+        // In-place balance updates
+        if (!this._query) {
+            tokenIn.balance = (0, big_number_1$3.bn)(tokenIn.balance)
+                .plus(amountIn)
+                .toString();
+            tokenOut.balance = (0, big_number_1$3.bn)(tokenOut.balance)
+                .minus(amountOut)
+                .toString();
+        }
+        return amountIn.toString();
+    }
+}
+linear.default = LinearPool;
+
 var stable = {};
 
 var subgraph = {};
@@ -11692,10 +13387,10 @@ var lib = /*#__PURE__*/ Object.freeze({
     FetchError: FetchError,
 });
 
-var require$$0$2 = /*@__PURE__*/ getAugmentedNamespace(lib);
+var require$$0$1 = /*@__PURE__*/ getAugmentedNamespace(lib);
 
 (function (module, exports) {
-    const nodeFetch = require$$0$2;
+    const nodeFetch = require$$0$1;
     const realFetch = nodeFetch.default || nodeFetch;
 
     const fetch = function (url, options) {
@@ -13301,19 +14996,31 @@ CombinedStream$1.prototype._emitError = function (err) {
 
 var mimeTypes = {};
 
-var require$$0$1 = {
+var require$$0 = {
     'application/1d-interleaved-parityfec': {
         source: 'iana',
     },
     'application/3gpdash-qoe-report+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/3gpp-ims+xml': {
         source: 'iana',
         compressible: true,
     },
+    'application/3gpphal+json': {
+        source: 'iana',
+        compressible: true,
+    },
+    'application/3gpphalforms+json': {
+        source: 'iana',
+        compressible: true,
+    },
     'application/a2l': {
+        source: 'iana',
+    },
+    'application/ace+cbor': {
         source: 'iana',
     },
     'application/activemessage': {
@@ -13363,6 +15070,14 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
     },
+    'application/alto-updatestreamcontrol+json': {
+        source: 'iana',
+        compressible: true,
+    },
+    'application/alto-updatestreamparams+json': {
+        source: 'iana',
+        compressible: true,
+    },
     'application/aml': {
         source: 'iana',
     },
@@ -13376,6 +15091,9 @@ var require$$0$1 = {
     'application/applixware': {
         source: 'apache',
         extensions: ['aw'],
+    },
+    'application/at+jwt': {
+        source: 'iana',
     },
     'application/atf': {
         source: 'iana',
@@ -13411,6 +15129,9 @@ var require$$0$1 = {
         compressible: true,
         extensions: ['dwd'],
     },
+    'application/atsc-dynamic-event-message': {
+        source: 'iana',
+    },
     'application/atsc-held+xml': {
         source: 'iana',
         compressible: true,
@@ -13445,6 +15166,7 @@ var require$$0$1 = {
     },
     'application/beep+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/calendar+json': {
@@ -13461,6 +15183,10 @@ var require$$0$1 = {
     },
     'application/cals-1840': {
         source: 'iana',
+    },
+    'application/captive+json': {
+        source: 'iana',
+        compressible: true,
     },
     'application/cbor': {
         source: 'iana',
@@ -13520,6 +15246,9 @@ var require$$0$1 = {
         compressible: true,
     },
     'application/cfw': {
+        source: 'iana',
+    },
+    'application/clr': {
         source: 'iana',
     },
     'application/clue+xml': {
@@ -13650,6 +15379,9 @@ var require$$0$1 = {
         compressible: true,
         extensions: ['dbk'],
     },
+    'application/dots+cbor': {
+        source: 'iana',
+    },
     'application/dskpp+xml': {
         source: 'iana',
         compressible: true,
@@ -13669,7 +15401,7 @@ var require$$0$1 = {
     'application/ecmascript': {
         source: 'iana',
         compressible: true,
-        extensions: ['ecma', 'es'],
+        extensions: ['es', 'ecma'],
     },
     'application/edi-consent': {
         source: 'iana',
@@ -13684,6 +15416,20 @@ var require$$0$1 = {
     },
     'application/efi': {
         source: 'iana',
+    },
+    'application/elm+json': {
+        source: 'iana',
+        charset: 'UTF-8',
+        compressible: true,
+    },
+    'application/elm+xml': {
+        source: 'iana',
+        compressible: true,
+    },
+    'application/emergencycalldata.cap+xml': {
+        source: 'iana',
+        charset: 'UTF-8',
+        compressible: true,
     },
     'application/emergencycalldata.comment+xml': {
         source: 'iana',
@@ -13749,6 +15495,10 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
     },
+    'application/express': {
+        source: 'iana',
+        extensions: ['exp'],
+    },
     'application/fastinfoset': {
         source: 'iana',
     },
@@ -13762,10 +15512,12 @@ var require$$0$1 = {
     },
     'application/fhir+json': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/fhir+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/fido.trusted-apps+json': {
@@ -13862,6 +15614,7 @@ var require$$0$1 = {
     },
     'application/im-iscomposing+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/index': {
@@ -13938,6 +15691,10 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
     },
+    'application/jscalendar+json': {
+        source: 'iana',
+        compressible: true,
+    },
     'application/json': {
         source: 'iana',
         charset: 'UTF-8',
@@ -14004,6 +15761,10 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
     },
+    'application/lpf+zip': {
+        source: 'iana',
+        compressible: false,
+    },
     'application/lxf': {
         source: 'iana',
     },
@@ -14024,6 +15785,7 @@ var require$$0$1 = {
         extensions: ['mads'],
     },
     'application/manifest+json': {
+        source: 'iana',
         charset: 'UTF-8',
         compressible: true,
         extensions: ['webmanifest'],
@@ -14143,6 +15905,9 @@ var require$$0$1 = {
     'application/mipc': {
         source: 'iana',
     },
+    'application/missing-blocks+cbor-seq': {
+        source: 'iana',
+    },
     'application/mmt-aei+xml': {
         source: 'iana',
         compressible: true,
@@ -14190,19 +15955,19 @@ var require$$0$1 = {
     'application/mrb-consumer+xml': {
         source: 'iana',
         compressible: true,
-        extensions: ['xdf'],
     },
     'application/mrb-publish+xml': {
         source: 'iana',
         compressible: true,
-        extensions: ['xdf'],
     },
     'application/msc-ivr+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/msc-mixer+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/msword': {
@@ -14234,9 +15999,11 @@ var require$$0$1 = {
     },
     'application/news-checkgroups': {
         source: 'iana',
+        charset: 'US-ASCII',
     },
     'application/news-groupinfo': {
         source: 'iana',
+        charset: 'US-ASCII',
     },
     'application/news-transmission': {
         source: 'iana',
@@ -14247,8 +16014,12 @@ var require$$0$1 = {
     },
     'application/node': {
         source: 'iana',
+        extensions: ['cjs'],
     },
     'application/nss': {
+        source: 'iana',
+    },
+    'application/oauth-authz-req+jwt': {
         source: 'iana',
     },
     'application/ocsp-request': {
@@ -14315,12 +16086,23 @@ var require$$0$1 = {
         source: 'apache',
         extensions: ['onetoc', 'onetoc2', 'onetmp', 'onepkg'],
     },
+    'application/opc-nodeset+xml': {
+        source: 'iana',
+        compressible: true,
+    },
     'application/oscore': {
         source: 'iana',
     },
     'application/oxps': {
         source: 'iana',
         extensions: ['oxps'],
+    },
+    'application/p21': {
+        source: 'iana',
+    },
+    'application/p21+zip': {
+        source: 'iana',
+        compressible: false,
     },
     'application/p2p-overlay+xml': {
         source: 'iana',
@@ -14367,10 +16149,12 @@ var require$$0$1 = {
     },
     'application/pidf+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/pidf-diff+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/pkcs10': {
@@ -14422,6 +16206,7 @@ var require$$0$1 = {
     },
     'application/poc-settings+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/postscript': {
@@ -14453,6 +16238,10 @@ var require$$0$1 = {
         source: 'iana',
         extensions: ['cww'],
     },
+    'application/prs.cyn': {
+        source: 'iana',
+        charset: '7-BIT',
+    },
     'application/prs.hpub+zip': {
         source: 'iana',
         compressible: false,
@@ -14474,6 +16263,10 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
         extensions: ['pskcxml'],
+    },
+    'application/pvd+json': {
+        source: 'iana',
+        compressible: true,
     },
     'application/qsig': {
         source: 'iana',
@@ -14598,6 +16391,17 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
     },
+    'application/sarif+json': {
+        source: 'iana',
+        compressible: true,
+    },
+    'application/sarif-external-properties+json': {
+        source: 'iana',
+        compressible: true,
+    },
+    'application/sbe': {
+        source: 'iana',
+    },
     'application/sbml+xml': {
         source: 'iana',
         compressible: true,
@@ -14645,6 +16449,13 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
         extensions: ['senmlx'],
+    },
+    'application/senml-etch+cbor': {
+        source: 'iana',
+    },
+    'application/senml-etch+json': {
+        source: 'iana',
+        compressible: true,
     },
     'application/senml-exi': {
         source: 'iana',
@@ -14826,6 +16637,10 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
     },
+    'application/td+json': {
+        source: 'iana',
+        compressible: true,
+    },
     'application/tei+xml': {
         source: 'iana',
         compressible: true,
@@ -14859,6 +16674,9 @@ var require$$0$1 = {
     'application/tnauthlist': {
         source: 'iana',
     },
+    'application/token-introspection+jwt': {
+        source: 'iana',
+    },
     'application/toml': {
         compressible: true,
         extensions: ['toml'],
@@ -14868,6 +16686,7 @@ var require$$0$1 = {
     },
     'application/trig': {
         source: 'iana',
+        extensions: ['trig'],
     },
     'application/ttml+xml': {
         source: 'iana',
@@ -14882,6 +16701,10 @@ var require$$0$1 = {
     },
     'application/tzif-leap': {
         source: 'iana',
+    },
+    'application/ubjson': {
+        compressible: false,
+        extensions: ['ubj'],
     },
     'application/ulpfec': {
         source: 'iana',
@@ -14898,6 +16721,7 @@ var require$$0$1 = {
     'application/urc-targetdesc+xml': {
         source: 'iana',
         compressible: true,
+        extensions: ['td'],
     },
     'application/urc-uisocketdesc+xml': {
         source: 'iana',
@@ -14933,6 +16757,9 @@ var require$$0$1 = {
     'application/vnd.3gpp-v2x-local-service-information': {
         source: 'iana',
     },
+    'application/vnd.3gpp.5gnas': {
+        source: 'iana',
+    },
     'application/vnd.3gpp.access-transfer-events+xml': {
         source: 'iana',
         compressible: true,
@@ -14944,6 +16771,15 @@ var require$$0$1 = {
     'application/vnd.3gpp.gmop+xml': {
         source: 'iana',
         compressible: true,
+    },
+    'application/vnd.3gpp.gtpc': {
+        source: 'iana',
+    },
+    'application/vnd.3gpp.interworking-data': {
+        source: 'iana',
+    },
+    'application/vnd.3gpp.lpp': {
+        source: 'iana',
     },
     'application/vnd.3gpp.mc-signalling-ear': {
         source: 'iana',
@@ -15054,6 +16890,12 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
     },
+    'application/vnd.3gpp.ngap': {
+        source: 'iana',
+    },
+    'application/vnd.3gpp.pfcp': {
+        source: 'iana',
+    },
     'application/vnd.3gpp.pic-bw-large': {
         source: 'iana',
         extensions: ['plb'],
@@ -15065,6 +16907,9 @@ var require$$0$1 = {
     'application/vnd.3gpp.pic-bw-var': {
         source: 'iana',
         extensions: ['pvb'],
+    },
+    'application/vnd.3gpp.s1ap': {
+        source: 'iana',
     },
     'application/vnd.3gpp.sms': {
         source: 'iana',
@@ -15160,6 +17005,9 @@ var require$$0$1 = {
     'application/vnd.afpc.afplinedata-pagedef': {
         source: 'iana',
     },
+    'application/vnd.afpc.cmoca-cmresource': {
+        source: 'iana',
+    },
     'application/vnd.afpc.foca-charset': {
         source: 'iana',
     },
@@ -15170,6 +17018,9 @@ var require$$0$1 = {
         source: 'iana',
     },
     'application/vnd.afpc.modca': {
+        source: 'iana',
+    },
+    'application/vnd.afpc.modca-cmtable': {
         source: 'iana',
     },
     'application/vnd.afpc.modca-formdef': {
@@ -15248,6 +17099,12 @@ var require$$0$1 = {
         source: 'iana',
         extensions: ['atx'],
     },
+    'application/vnd.apache.arrow.file': {
+        source: 'iana',
+    },
+    'application/vnd.apache.arrow.stream': {
+        source: 'iana',
+    },
     'application/vnd.apache.thrift.binary': {
         source: 'iana',
     },
@@ -15276,7 +17133,7 @@ var require$$0$1 = {
     },
     'application/vnd.apple.keynote': {
         source: 'iana',
-        extensions: ['keynote'],
+        extensions: ['key'],
     },
     'application/vnd.apple.mpegurl': {
         source: 'iana',
@@ -15547,6 +17404,12 @@ var require$$0$1 = {
     'application/vnd.crypto-shade-file': {
         source: 'iana',
     },
+    'application/vnd.cryptomator.encrypted': {
+        source: 'iana',
+    },
+    'application/vnd.cryptomator.vault': {
+        source: 'iana',
+    },
     'application/vnd.ctc-posml': {
         source: 'iana',
         extensions: ['pml'],
@@ -15589,9 +17452,23 @@ var require$$0$1 = {
     'application/vnd.cybank': {
         source: 'iana',
     },
+    'application/vnd.cyclonedx+json': {
+        source: 'iana',
+        compressible: true,
+    },
+    'application/vnd.cyclonedx+xml': {
+        source: 'iana',
+        compressible: true,
+    },
     'application/vnd.d2l.coursepackage1p0+zip': {
         source: 'iana',
         compressible: false,
+    },
+    'application/vnd.d3m-dataset': {
+        source: 'iana',
+    },
+    'application/vnd.d3m-problem': {
+        source: 'iana',
     },
     'application/vnd.dart': {
         source: 'iana',
@@ -15609,6 +17486,10 @@ var require$$0$1 = {
     'application/vnd.dataresource+json': {
         source: 'iana',
         compressible: true,
+    },
+    'application/vnd.dbf': {
+        source: 'iana',
+        extensions: ['dbf'],
     },
     'application/vnd.debian.binary-package': {
         source: 'iana',
@@ -15693,6 +17574,10 @@ var require$$0$1 = {
     'application/vnd.dvb.ait': {
         source: 'iana',
         extensions: ['ait'],
+    },
+    'application/vnd.dvb.dvbisl+xml': {
+        source: 'iana',
+        compressible: true,
     },
     'application/vnd.dvb.dvbj': {
         source: 'iana',
@@ -16020,6 +17905,19 @@ var require$$0$1 = {
         source: 'iana',
         extensions: ['fsc'],
     },
+    'application/vnd.fujifilm.fb.docuworks': {
+        source: 'iana',
+    },
+    'application/vnd.fujifilm.fb.docuworks.binder': {
+        source: 'iana',
+    },
+    'application/vnd.fujifilm.fb.docuworks.container': {
+        source: 'iana',
+    },
+    'application/vnd.fujifilm.fb.jfi+xml': {
+        source: 'iana',
+        compressible: true,
+    },
     'application/vnd.fujitsu.oasys': {
         source: 'iana',
         extensions: ['oas'],
@@ -16097,6 +17995,9 @@ var require$$0$1 = {
     'application/vnd.geogebra.file': {
         source: 'iana',
         extensions: ['ggb'],
+    },
+    'application/vnd.geogebra.slides': {
+        source: 'iana',
     },
     'application/vnd.geogebra.tool': {
         source: 'iana',
@@ -16628,6 +18529,7 @@ var require$$0$1 = {
     },
     'application/vnd.mapbox-vector-tile': {
         source: 'iana',
+        extensions: ['mvt'],
     },
     'application/vnd.marlin.drm.actiontoken+xml': {
         source: 'iana',
@@ -16987,6 +18889,9 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
     },
+    'application/vnd.nebumind.line': {
+        source: 'iana',
+    },
     'application/vnd.nervana': {
         source: 'iana',
     },
@@ -17186,6 +19091,10 @@ var require$$0$1 = {
     'application/vnd.ocf+cbor': {
         source: 'iana',
     },
+    'application/vnd.oci.image.manifest.v1+json': {
+        source: 'iana',
+        compressible: true,
+    },
     'application/vnd.oftn.l10n+json': {
         source: 'iana',
         compressible: true,
@@ -17330,6 +19239,9 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
     },
+    'application/vnd.oma.lwm2m+cbor': {
+        source: 'iana',
+    },
     'application/vnd.oma.lwm2m+json': {
         source: 'iana',
         compressible: true,
@@ -17374,14 +19286,17 @@ var require$$0$1 = {
     },
     'application/vnd.omads-email+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/vnd.omads-file+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/vnd.omads-folder+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/vnd.omaloc-supl-init': {
@@ -17424,6 +19339,9 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
         extensions: ['osm'],
+    },
+    'application/vnd.opentimestamps.ots': {
+        source: 'iana',
     },
     'application/vnd.openxmlformats-officedocument.custom-properties+xml': {
         source: 'iana',
@@ -17989,6 +19907,7 @@ var require$$0$1 = {
     },
     'application/vnd.rar': {
         source: 'iana',
+        extensions: ['rar'],
     },
     'application/vnd.realvnc.bed': {
         source: 'iana',
@@ -18004,6 +19923,9 @@ var require$$0$1 = {
         extensions: ['musicxml'],
     },
     'application/vnd.renlearn.rlprint': {
+        source: 'iana',
+    },
+    'application/vnd.resilient.logic': {
         source: 'iana',
     },
     'application/vnd.restful+json': {
@@ -18043,6 +19965,9 @@ var require$$0$1 = {
     'application/vnd.sailingtracker.track': {
         source: 'iana',
         extensions: ['st'],
+    },
+    'application/vnd.sar': {
+        source: 'iana',
     },
     'application/vnd.sbm.cid': {
         source: 'iana',
@@ -18090,6 +20015,10 @@ var require$$0$1 = {
         source: 'iana',
         extensions: ['see'],
     },
+    'application/vnd.seis+json': {
+        source: 'iana',
+        compressible: true,
+    },
     'application/vnd.sema': {
         source: 'iana',
         extensions: ['sema'],
@@ -18129,6 +20058,12 @@ var require$$0$1 = {
         source: 'iana',
         compressible: true,
     },
+    'application/vnd.shp': {
+        source: 'iana',
+    },
+    'application/vnd.shx': {
+        source: 'iana',
+    },
     'application/vnd.sigrok.session': {
         source: 'iana',
     },
@@ -18150,6 +20085,9 @@ var require$$0$1 = {
     'application/vnd.smart.teacher': {
         source: 'iana',
         extensions: ['teacher'],
+    },
+    'application/vnd.snesdev-page-table': {
+        source: 'iana',
     },
     'application/vnd.software602.filler.form+xml': {
         source: 'iana',
@@ -18275,21 +20213,28 @@ var require$$0$1 = {
     'application/vnd.swiftview-ics': {
         source: 'iana',
     },
+    'application/vnd.sycle+xml': {
+        source: 'iana',
+        compressible: true,
+    },
     'application/vnd.symbian.install': {
         source: 'apache',
         extensions: ['sis', 'sisx'],
     },
     'application/vnd.syncml+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
         extensions: ['xsm'],
     },
     'application/vnd.syncml.dm+wbxml': {
         source: 'iana',
+        charset: 'UTF-8',
         extensions: ['bdm'],
     },
     'application/vnd.syncml.dm+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
         extensions: ['xdm'],
     },
@@ -18301,6 +20246,7 @@ var require$$0$1 = {
     },
     'application/vnd.syncml.dmddf+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
         extensions: ['ddf'],
     },
@@ -18309,6 +20255,7 @@ var require$$0$1 = {
     },
     'application/vnd.syncml.dmtnds+xml': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
     },
     'application/vnd.syncml.ds.notification': {
@@ -18445,6 +20392,10 @@ var require$$0$1 = {
     'application/vnd.verimatrix.vcas': {
         source: 'iana',
     },
+    'application/vnd.veritone.aion+json': {
+        source: 'iana',
+        compressible: true,
+    },
     'application/vnd.veryant.thin': {
         source: 'iana',
     },
@@ -18477,6 +20428,7 @@ var require$$0$1 = {
     },
     'application/vnd.wap.wbxml': {
         source: 'iana',
+        charset: 'UTF-8',
         extensions: ['wbxml'],
     },
     'application/vnd.wap.wmlc': {
@@ -18490,6 +20442,9 @@ var require$$0$1 = {
     'application/vnd.webturbo': {
         source: 'iana',
         extensions: ['wtb'],
+    },
+    'application/vnd.wfa.dpp': {
+        source: 'iana',
     },
     'application/vnd.wfa.p2p': {
         source: 'iana',
@@ -18646,6 +20601,7 @@ var require$$0$1 = {
         source: 'iana',
     },
     'application/wasm': {
+        source: 'iana',
         compressible: true,
         extensions: ['wasm'],
     },
@@ -18937,6 +20893,15 @@ var require$$0$1 = {
         source: 'apache',
         extensions: ['iso'],
     },
+    'application/x-iwork-keynote-sffkey': {
+        extensions: ['key'],
+    },
+    'application/x-iwork-numbers-sffnumbers': {
+        extensions: ['numbers'],
+    },
+    'application/x-iwork-pages-sffpages': {
+        extensions: ['pages'],
+    },
     'application/x-java-archive-diff': {
         source: 'nginx',
         extensions: ['jardiff'],
@@ -19083,6 +21048,9 @@ var require$$0$1 = {
         source: 'apache',
         extensions: ['p7r'],
     },
+    'application/x-pki-message': {
+        source: 'iana',
+    },
     'application/x-rar-compressed': {
         source: 'apache',
         compressible: false,
@@ -19225,8 +21193,14 @@ var require$$0$1 = {
         compressible: true,
     },
     'application/x-x509-ca-cert': {
-        source: 'apache',
+        source: 'iana',
         extensions: ['der', 'crt', 'pem'],
+    },
+    'application/x-x509-ca-ra-cert': {
+        source: 'iana',
+    },
+    'application/x-x509-next-ca-cert': {
+        source: 'iana',
     },
     'application/x-xfig': {
         source: 'apache',
@@ -19285,7 +21259,6 @@ var require$$0$1 = {
     'application/xcap-error+xml': {
         source: 'iana',
         compressible: true,
-        extensions: ['xer'],
     },
     'application/xcap-ns+xml': {
         source: 'iana',
@@ -19353,7 +21326,7 @@ var require$$0$1 = {
     'application/xslt+xml': {
         source: 'iana',
         compressible: true,
-        extensions: ['xslt'],
+        extensions: ['xsl', 'xslt'],
     },
     'application/xspf+xml': {
         source: 'apache',
@@ -19427,6 +21400,7 @@ var require$$0$1 = {
     },
     'audio/amr': {
         source: 'iana',
+        extensions: ['amr'],
     },
     'audio/amr-wb': {
         source: 'iana',
@@ -19632,6 +21606,9 @@ var require$$0$1 = {
     'audio/melp600': {
         source: 'iana',
     },
+    'audio/mhas': {
+        source: 'iana',
+    },
     'audio/midi': {
         source: 'apache',
         extensions: ['mid', 'midi', 'kar', 'rmi'],
@@ -19672,7 +21649,7 @@ var require$$0$1 = {
     'audio/ogg': {
         source: 'iana',
         compressible: false,
-        extensions: ['oga', 'ogg', 'spx'],
+        extensions: ['oga', 'ogg', 'spx', 'opus'],
     },
     'audio/opus': {
         source: 'iana',
@@ -19720,6 +21697,9 @@ var require$$0$1 = {
         source: 'apache',
         extensions: ['s3m'],
     },
+    'audio/scip': {
+        source: 'iana',
+    },
     'audio/silk': {
         source: 'apache',
         extensions: ['sil'],
@@ -19731,6 +21711,9 @@ var require$$0$1 = {
         source: 'iana',
     },
     'audio/smv0': {
+        source: 'iana',
+    },
+    'audio/sofa': {
         source: 'iana',
     },
     'audio/sp-midi': {
@@ -19751,7 +21734,13 @@ var require$$0$1 = {
     'audio/tetra_acelp': {
         source: 'iana',
     },
+    'audio/tetra_acelp_bb': {
+        source: 'iana',
+    },
     'audio/tone': {
+        source: 'iana',
+    },
+    'audio/tsvcis': {
         source: 'iana',
     },
     'audio/uemclip': {
@@ -20053,6 +22042,11 @@ var require$$0$1 = {
     'image/avcs': {
         source: 'iana',
     },
+    'image/avif': {
+        source: 'iana',
+        compressible: false,
+        extensions: ['avif'],
+    },
     'image/bmp': {
         source: 'iana',
         compressible: true,
@@ -20174,6 +22168,10 @@ var require$$0$1 = {
     'image/ktx': {
         source: 'iana',
         extensions: ['ktx'],
+    },
+    'image/ktx2': {
+        source: 'iana',
+        extensions: ['ktx2'],
     },
     'image/naplps': {
         source: 'iana',
@@ -20298,6 +22296,10 @@ var require$$0$1 = {
     'image/vnd.net-fpx': {
         source: 'iana',
         extensions: ['npx'],
+    },
+    'image/vnd.pco.b16': {
+        source: 'iana',
+        extensions: ['b16'],
     },
     'image/vnd.radiance': {
         source: 'iana',
@@ -20498,6 +22500,9 @@ var require$$0$1 = {
         source: 'iana',
         extensions: ['3mf'],
     },
+    'model/e57': {
+        source: 'iana',
+    },
     'model/gltf+json': {
         source: 'iana',
         compressible: true,
@@ -20517,6 +22522,32 @@ var require$$0$1 = {
         source: 'iana',
         compressible: false,
         extensions: ['msh', 'mesh', 'silo'],
+    },
+    'model/mtl': {
+        source: 'iana',
+        extensions: ['mtl'],
+    },
+    'model/obj': {
+        source: 'iana',
+        extensions: ['obj'],
+    },
+    'model/step': {
+        source: 'iana',
+    },
+    'model/step+xml': {
+        source: 'iana',
+        compressible: true,
+        extensions: ['stpx'],
+    },
+    'model/step+zip': {
+        source: 'iana',
+        compressible: false,
+        extensions: ['stpz'],
+    },
+    'model/step-xml+zip': {
+        source: 'iana',
+        compressible: false,
+        extensions: ['stpxz'],
     },
     'model/stl': {
         source: 'iana',
@@ -20568,8 +22599,15 @@ var require$$0$1 = {
         source: 'iana',
         extensions: ['x_t'],
     },
+    'model/vnd.pytha.pyox': {
+        source: 'iana',
+    },
     'model/vnd.rosette.annotated-data-model': {
         source: 'iana',
+    },
+    'model/vnd.sap.vds': {
+        source: 'iana',
+        extensions: ['vds'],
     },
     'model/vnd.usdz+zip': {
         source: 'iana',
@@ -20686,6 +22724,15 @@ var require$$0$1 = {
     'text/coffeescript': {
         extensions: ['coffee', 'litcoffee'],
     },
+    'text/cql': {
+        source: 'iana',
+    },
+    'text/cql-expression': {
+        source: 'iana',
+    },
+    'text/cql-identifier': {
+        source: 'iana',
+    },
     'text/css': {
         source: 'iana',
         charset: 'UTF-8',
@@ -20715,10 +22762,16 @@ var require$$0$1 = {
     'text/enriched': {
         source: 'iana',
     },
+    'text/fhirpath': {
+        source: 'iana',
+    },
     'text/flexfec': {
         source: 'iana',
     },
     'text/fwdred': {
+        source: 'iana',
+    },
+    'text/gff3': {
         source: 'iana',
     },
     'text/grammar-ref-list': {
@@ -20765,11 +22818,13 @@ var require$$0$1 = {
     },
     'text/n3': {
         source: 'iana',
+        charset: 'UTF-8',
         compressible: true,
         extensions: ['n3'],
     },
     'text/parameters': {
         source: 'iana',
+        charset: 'UTF-8',
     },
     'text/parityfec': {
         source: 'iana',
@@ -20781,6 +22836,7 @@ var require$$0$1 = {
     },
     'text/provenance-notation': {
         source: 'iana',
+        charset: 'UTF-8',
     },
     'text/prs.fallenstein.rst': {
         source: 'iana',
@@ -20824,11 +22880,19 @@ var require$$0$1 = {
         source: 'iana',
         extensions: ['sgml', 'sgm'],
     },
+    'text/shaclc': {
+        source: 'iana',
+    },
     'text/shex': {
+        source: 'iana',
         extensions: ['shex'],
     },
     'text/slim': {
         extensions: ['slim', 'slm'],
+    },
+    'text/spdx': {
+        source: 'iana',
+        extensions: ['spdx'],
     },
     'text/strings': {
         source: 'iana',
@@ -20893,6 +22957,7 @@ var require$$0$1 = {
     },
     'text/vnd.debian.copyright': {
         source: 'iana',
+        charset: 'UTF-8',
     },
     'text/vnd.dmclientscript': {
         source: 'iana',
@@ -20903,6 +22968,7 @@ var require$$0$1 = {
     },
     'text/vnd.esmertec.theme-descriptor': {
         source: 'iana',
+        charset: 'UTF-8',
     },
     'text/vnd.ficlab.flt': {
         source: 'iana',
@@ -20921,6 +22987,9 @@ var require$$0$1 = {
     'text/vnd.graphviz': {
         source: 'iana',
         extensions: ['gv'],
+    },
+    'text/vnd.hans': {
+        source: 'iana',
     },
     'text/vnd.hgl': {
         source: 'iana',
@@ -20965,10 +23034,12 @@ var require$$0$1 = {
     },
     'text/vnd.sun.j2me.app-descriptor': {
         source: 'iana',
+        charset: 'UTF-8',
         extensions: ['jad'],
     },
     'text/vnd.trolltech.linguist': {
         source: 'iana',
+        charset: 'UTF-8',
     },
     'text/vnd.wap.si': {
         source: 'iana',
@@ -21085,6 +23156,7 @@ var require$$0$1 = {
         source: 'iana',
     },
     'text/yaml': {
+        compressible: true,
         extensions: ['yaml', 'yml'],
     },
     'video/1d-interleaved-parityfec': {
@@ -21101,6 +23173,9 @@ var require$$0$1 = {
         source: 'iana',
         extensions: ['3g2'],
     },
+    'video/av1': {
+        source: 'iana',
+    },
     'video/bmpeg': {
         source: 'iana',
     },
@@ -21114,6 +23189,9 @@ var require$$0$1 = {
         source: 'iana',
     },
     'video/encaprtp': {
+        source: 'iana',
+    },
+    'video/ffv1': {
         source: 'iana',
     },
     'video/flexfec': {
@@ -21148,6 +23226,7 @@ var require$$0$1 = {
     },
     'video/iso.segment': {
         source: 'iana',
+        extensions: ['m4s'],
     },
     'video/jpeg': {
         source: 'iana',
@@ -21159,6 +23238,9 @@ var require$$0$1 = {
     'video/jpm': {
         source: 'apache',
         extensions: ['jpm', 'jpgm'],
+    },
+    'video/jxsv': {
+        source: 'iana',
     },
     'video/mj2': {
         source: 'iana',
@@ -21225,6 +23307,9 @@ var require$$0$1 = {
         source: 'iana',
     },
     'video/rtx': {
+        source: 'iana',
+    },
+    'video/scip': {
         source: 'iana',
     },
     'video/smpte291': {
@@ -21364,6 +23449,9 @@ var require$$0$1 = {
     'video/vp8': {
         source: 'iana',
     },
+    'video/vp9': {
+        source: 'iana',
+    },
     'video/webm': {
         source: 'apache',
         compressible: false,
@@ -21454,7 +23542,7 @@ var require$$0$1 = {
  * Module exports.
  */
 
-var mimeDb = require$$0$1;
+var mimeDb = require$$0;
 
 /*!
  * mime-types
@@ -22547,16 +24635,36 @@ var isExtractableFileEnhanced = function (value) {
  * (https://github.com/jaydenseric/graphql-multipart-request-spec)
  * Otherwise returns JSON
  */
-function createRequestBody(query, variables) {
+function createRequestBody(query, variables, operationName) {
     var _a = extract_files_1.extractFiles(
-            { query: query, variables: variables },
+            {
+                query: query,
+                variables: variables,
+                operationName: operationName,
+            },
             '',
             isExtractableFileEnhanced
         ),
         clone = _a.clone,
         files = _a.files;
     if (files.size === 0) {
-        return JSON.stringify(clone);
+        if (!Array.isArray(query)) {
+            return JSON.stringify(clone);
+        }
+        if (typeof variables !== 'undefined' && !Array.isArray(variables)) {
+            throw new Error(
+                'Cannot create request body with given variable type, array expected'
+            );
+        }
+        // Batch support
+        var payload = query.reduce(function (accu, currentQuery, index) {
+            accu.push({
+                query: currentQuery,
+                variables: variables ? variables[index] : undefined,
+            });
+            return accu;
+        }, []);
+        return JSON.stringify(payload);
     }
     var Form = typeof FormData === 'undefined' ? form_data_1.default : FormData;
     var form = new Form();
@@ -22595,6 +24703,12 @@ var __extends =
             return extendStatics(d, b);
         };
         return function (d, b) {
+            if (typeof b !== 'function' && b !== null)
+                throw new TypeError(
+                    'Class extends value ' +
+                        String(b) +
+                        ' is not a constructor or null'
+                );
             extendStatics(d, b);
             function __() {
                 this.constructor = d;
@@ -22873,6 +24987,7 @@ types.ClientError = ClientError;
         };
     Object.defineProperty(exports, '__esModule', { value: true });
     exports.gql =
+        exports.batchRequests =
         exports.request =
         exports.rawRequest =
         exports.GraphQLClient =
@@ -22915,6 +25030,148 @@ types.ClientError = ClientError;
         return oHeaders;
     };
     /**
+     * Clean a GraphQL document to send it via a GET query
+     *
+     * @param {string} str GraphQL query
+     * @returns {string} Cleaned query
+     */
+    var queryCleanner = function (str) {
+        return str.replace(/([\s,]|#[^\n\r]+)+/g, ' ').trim();
+    };
+    /**
+     * Create query string for GraphQL request
+     *
+     * @param {object} param0 -
+     *
+     * @param {string|string[]} param0.query the GraphQL document or array of document if it's a batch request
+     * @param {string|undefined} param0.operationName the GraphQL operation name
+     * @param {any|any[]} param0.variables the GraphQL variables to use
+     */
+    var buildGetQueryParams = function (_a) {
+        var query = _a.query,
+            variables = _a.variables,
+            operationName = _a.operationName;
+        if (!Array.isArray(query)) {
+            var search = ['query=' + encodeURIComponent(queryCleanner(query))];
+            if (variables) {
+                search.push(
+                    'variables=' + encodeURIComponent(JSON.stringify(variables))
+                );
+            }
+            if (operationName) {
+                search.push(
+                    'operationName=' + encodeURIComponent(operationName)
+                );
+            }
+            return search.join('&');
+        }
+        if (typeof variables !== 'undefined' && !Array.isArray(variables)) {
+            throw new Error(
+                'Cannot create query with given variable type, array expected'
+            );
+        }
+        // Batch support
+        var payload = query.reduce(function (accu, currentQuery, index) {
+            accu.push({
+                query: queryCleanner(currentQuery),
+                variables: variables
+                    ? JSON.stringify(variables[index])
+                    : undefined,
+            });
+            return accu;
+        }, []);
+        return 'query=' + encodeURIComponent(JSON.stringify(payload));
+    };
+    /**
+     * Fetch data using POST method
+     */
+    var post = function (_a) {
+        var url = _a.url,
+            query = _a.query,
+            variables = _a.variables,
+            operationName = _a.operationName,
+            headers = _a.headers,
+            fetch = _a.fetch,
+            fetchOptions = _a.fetchOptions;
+        return __awaiter(void 0, void 0, void 0, function () {
+            var body;
+            return __generator(this, function (_b) {
+                switch (_b.label) {
+                    case 0:
+                        body = createRequestBody_1.default(
+                            query,
+                            variables,
+                            operationName
+                        );
+                        return [
+                            4 /*yield*/,
+                            fetch(
+                                url,
+                                __assign(
+                                    {
+                                        method: 'POST',
+                                        headers: __assign(
+                                            __assign(
+                                                {},
+                                                typeof body === 'string'
+                                                    ? {
+                                                          'Content-Type':
+                                                              'application/json',
+                                                      }
+                                                    : {}
+                                            ),
+                                            headers
+                                        ),
+                                        body: body,
+                                    },
+                                    fetchOptions
+                                )
+                            ),
+                        ];
+                    case 1:
+                        return [2 /*return*/, _b.sent()];
+                }
+            });
+        });
+    };
+    /**
+     * Fetch data using GET method
+     */
+    var get = function (_a) {
+        var url = _a.url,
+            query = _a.query,
+            variables = _a.variables,
+            operationName = _a.operationName,
+            headers = _a.headers,
+            fetch = _a.fetch,
+            fetchOptions = _a.fetchOptions;
+        return __awaiter(void 0, void 0, void 0, function () {
+            var queryParams;
+            return __generator(this, function (_b) {
+                switch (_b.label) {
+                    case 0:
+                        queryParams = buildGetQueryParams({
+                            query: query,
+                            variables: variables,
+                            operationName: operationName,
+                        });
+                        return [
+                            4 /*yield*/,
+                            fetch(
+                                url + '?' + queryParams,
+                                __assign(
+                                    { method: 'GET', headers: headers },
+                                    fetchOptions
+                                )
+                            ),
+                        ];
+                    case 1:
+                        return [2 /*return*/, _b.sent()];
+                }
+            });
+        });
+    };
+    /**
      * todo
      */
     var GraphQLClient = /** @class */ (function () {
@@ -22927,89 +25184,26 @@ types.ClientError = ClientError;
             variables,
             requestHeaders
         ) {
-            return __awaiter(this, void 0, void 0, function () {
-                var _a,
-                    headers,
-                    _b,
-                    localFetch,
-                    others,
-                    body,
-                    response,
-                    result,
-                    headers_1,
-                    status_1,
-                    errorResult;
-                return __generator(this, function (_c) {
-                    switch (_c.label) {
-                        case 0:
-                            (_a = this.options),
-                                (headers = _a.headers),
-                                (_b = _a.fetch),
-                                (localFetch =
-                                    _b === void 0 ? cross_fetch_1.default : _b),
-                                (others = __rest(_a, ['headers', 'fetch']));
-                            body = createRequestBody_1.default(
-                                query,
-                                variables
-                            );
-                            return [
-                                4 /*yield*/,
-                                localFetch(
-                                    this.url,
-                                    __assign(
-                                        {
-                                            method: 'POST',
-                                            headers: __assign(
-                                                __assign(
-                                                    __assign(
-                                                        {},
-                                                        typeof body === 'string'
-                                                            ? {
-                                                                  'Content-Type':
-                                                                      'application/json',
-                                                              }
-                                                            : {}
-                                                    ),
-                                                    resolveHeaders(headers)
-                                                ),
-                                                resolveHeaders(requestHeaders)
-                                            ),
-                                            body: body,
-                                        },
-                                        others
-                                    )
-                                ),
-                            ];
-                        case 1:
-                            response = _c.sent();
-                            return [4 /*yield*/, getResult(response)];
-                        case 2:
-                            result = _c.sent();
-                            if (response.ok && !result.errors && result.data) {
-                                (headers_1 = response.headers),
-                                    (status_1 = response.status);
-                                return [
-                                    2 /*return*/,
-                                    __assign(__assign({}, result), {
-                                        headers: headers_1,
-                                        status: status_1,
-                                    }),
-                                ];
-                            } else {
-                                errorResult =
-                                    typeof result === 'string'
-                                        ? { error: result }
-                                        : result;
-                                throw new types_1.ClientError(
-                                    __assign(__assign({}, errorResult), {
-                                        status: response.status,
-                                        headers: response.headers,
-                                    }),
-                                    { query: query, variables: variables }
-                                );
-                            }
-                    }
-                });
+            var _a = this.options,
+                headers = _a.headers,
+                _b = _a.fetch,
+                fetch = _b === void 0 ? cross_fetch_1.default : _b,
+                _c = _a.method,
+                method = _c === void 0 ? 'POST' : _c,
+                fetchOptions = __rest(_a, ['headers', 'fetch', 'method']);
+            var url = this.url;
+            return makeRequest({
+                url: url,
+                query: query,
+                variables: variables,
+                headers: __assign(
+                    __assign({}, resolveHeaders(headers)),
+                    resolveHeaders(requestHeaders)
+                ),
+                operationName: undefined,
+                fetch: fetch,
+                method: method,
+                fetchOptions: fetchOptions,
             });
         };
         /**
@@ -23024,74 +25218,119 @@ types.ClientError = ClientError;
                 var _a,
                     headers,
                     _b,
-                    localFetch,
-                    others,
-                    resolvedDoc,
-                    body,
-                    response,
-                    result,
-                    errorResult;
-                return __generator(this, function (_c) {
-                    switch (_c.label) {
+                    fetch,
+                    _c,
+                    method,
+                    fetchOptions,
+                    url,
+                    _d,
+                    query,
+                    operationName,
+                    data;
+                return __generator(this, function (_e) {
+                    switch (_e.label) {
                         case 0:
                             (_a = this.options),
                                 (headers = _a.headers),
                                 (_b = _a.fetch),
-                                (localFetch =
+                                (fetch =
                                     _b === void 0 ? cross_fetch_1.default : _b),
-                                (others = __rest(_a, ['headers', 'fetch']));
-                            resolvedDoc = resolveRequestDocument(document);
-                            body = createRequestBody_1.default(
-                                resolvedDoc,
-                                variables
-                            );
+                                (_c = _a.method),
+                                (method = _c === void 0 ? 'POST' : _c),
+                                (fetchOptions = __rest(_a, [
+                                    'headers',
+                                    'fetch',
+                                    'method',
+                                ]));
+                            url = this.url;
+                            (_d = resolveRequestDocument(document)),
+                                (query = _d.query),
+                                (operationName = _d.operationName);
                             return [
                                 4 /*yield*/,
-                                localFetch(
-                                    this.url,
-                                    __assign(
-                                        {
-                                            method: 'POST',
-                                            headers: __assign(
-                                                __assign(
-                                                    __assign(
-                                                        {},
-                                                        typeof body === 'string'
-                                                            ? {
-                                                                  'Content-Type':
-                                                                      'application/json',
-                                                              }
-                                                            : {}
-                                                    ),
-                                                    resolveHeaders(headers)
-                                                ),
-                                                resolveHeaders(requestHeaders)
-                                            ),
-                                            body: body,
-                                        },
-                                        others
-                                    )
-                                ),
+                                makeRequest({
+                                    url: url,
+                                    query: query,
+                                    variables: variables,
+                                    headers: __assign(
+                                        __assign({}, resolveHeaders(headers)),
+                                        resolveHeaders(requestHeaders)
+                                    ),
+                                    operationName: operationName,
+                                    fetch: fetch,
+                                    method: method,
+                                    fetchOptions: fetchOptions,
+                                }),
                             ];
                         case 1:
-                            response = _c.sent();
-                            return [4 /*yield*/, getResult(response)];
-                        case 2:
-                            result = _c.sent();
-                            if (response.ok && !result.errors && result.data) {
-                                return [2 /*return*/, result.data];
-                            } else {
-                                errorResult =
-                                    typeof result === 'string'
-                                        ? { error: result }
-                                        : result;
-                                throw new types_1.ClientError(
-                                    __assign(__assign({}, errorResult), {
-                                        status: response.status,
-                                    }),
-                                    { query: resolvedDoc, variables: variables }
-                                );
-                            }
+                            data = _e.sent().data;
+                            return [2 /*return*/, data];
+                    }
+                });
+            });
+        };
+        /**
+         * Send a GraphQL document to the server.
+         */
+        GraphQLClient.prototype.batchRequests = function (
+            documents,
+            requestHeaders
+        ) {
+            return __awaiter(this, void 0, void 0, function () {
+                var _a,
+                    headers,
+                    _b,
+                    fetch,
+                    _c,
+                    method,
+                    fetchOptions,
+                    url,
+                    queries,
+                    variables,
+                    data;
+                return __generator(this, function (_d) {
+                    switch (_d.label) {
+                        case 0:
+                            (_a = this.options),
+                                (headers = _a.headers),
+                                (_b = _a.fetch),
+                                (fetch =
+                                    _b === void 0 ? cross_fetch_1.default : _b),
+                                (_c = _a.method),
+                                (method = _c === void 0 ? 'POST' : _c),
+                                (fetchOptions = __rest(_a, [
+                                    'headers',
+                                    'fetch',
+                                    'method',
+                                ]));
+                            url = this.url;
+                            queries = documents.map(function (_a) {
+                                var document = _a.document;
+                                return resolveRequestDocument(document).query;
+                            });
+                            variables = documents.map(function (_a) {
+                                var variables = _a.variables;
+                                return variables;
+                            });
+                            return [
+                                4 /*yield*/,
+                                makeRequest({
+                                    url: url,
+                                    query: queries,
+                                    variables: variables,
+                                    headers: __assign(
+                                        __assign({}, resolveHeaders(headers)),
+                                        resolveHeaders(requestHeaders)
+                                    ),
+                                    operationName: undefined,
+                                    fetch: fetch,
+                                    method: method,
+                                    fetchOptions: fetchOptions,
+                                }),
+                            ];
+                        case 1:
+                            data = _d.sent().data;
+                            return [2 /*return*/, data];
                     }
                 });
             });
@@ -23115,18 +25354,112 @@ types.ClientError = ClientError;
             }
             return this;
         };
+        /**
+         * Change the client endpoint. All subsequent requests will send to this endpoint.
+         */
+        GraphQLClient.prototype.setEndpoint = function (value) {
+            this.url = value;
+            return this;
+        };
         return GraphQLClient;
     })();
     exports.GraphQLClient = GraphQLClient;
+    function makeRequest(_a) {
+        var url = _a.url,
+            query = _a.query,
+            variables = _a.variables,
+            headers = _a.headers,
+            operationName = _a.operationName,
+            fetch = _a.fetch,
+            _b = _a.method,
+            method = _b === void 0 ? 'POST' : _b,
+            fetchOptions = _a.fetchOptions;
+        return __awaiter(this, void 0, void 0, function () {
+            var fetcher,
+                isBathchingQuery,
+                response,
+                result,
+                successfullyReceivedData,
+                headers_1,
+                status_1,
+                errorResult;
+            return __generator(this, function (_c) {
+                switch (_c.label) {
+                    case 0:
+                        fetcher = method.toUpperCase() === 'POST' ? post : get;
+                        isBathchingQuery = Array.isArray(query);
+                        return [
+                            4 /*yield*/,
+                            fetcher({
+                                url: url,
+                                query: query,
+                                variables: variables,
+                                operationName: operationName,
+                                headers: headers,
+                                fetch: fetch,
+                                fetchOptions: fetchOptions,
+                            }),
+                        ];
+                    case 1:
+                        response = _c.sent();
+                        return [4 /*yield*/, getResult(response)];
+                    case 2:
+                        result = _c.sent();
+                        successfullyReceivedData =
+                            isBathchingQuery && Array.isArray(result)
+                                ? !result.some(function (_a) {
+                                      var data = _a.data;
+                                      return !data;
+                                  })
+                                : !!result.data;
+                        if (
+                            response.ok &&
+                            !result.errors &&
+                            successfullyReceivedData
+                        ) {
+                            (headers_1 = response.headers),
+                                (status_1 = response.status);
+                            return [
+                                2 /*return*/,
+                                __assign(
+                                    __assign(
+                                        {},
+                                        isBathchingQuery
+                                            ? { data: result }
+                                            : result
+                                    ),
+                                    { headers: headers_1, status: status_1 }
+                                ),
+                            ];
+                        } else {
+                            errorResult =
+                                typeof result === 'string'
+                                    ? { error: result }
+                                    : result;
+                            throw new types_1.ClientError(
+                                __assign(__assign({}, errorResult), {
+                                    status: response.status,
+                                    headers: response.headers,
+                                }),
+                                { query: query, variables: variables }
+                            );
+                        }
+                }
+            });
+        });
+    }
     /**
      * todo
      */
-    function rawRequest(url, query, variables) {
+    function rawRequest(url, query, variables, requestHeaders) {
         return __awaiter(this, void 0, void 0, function () {
             var client;
             return __generator(this, function (_a) {
                 client = new GraphQLClient(url);
-                return [2 /*return*/, client.rawRequest(query, variables)];
+                return [
+                    2 /*return*/,
+                    client.rawRequest(query, variables, requestHeaders),
+                ];
             });
         });
     }
@@ -23165,16 +25498,66 @@ types.ClientError = ClientError;
      * await request('https://foo.bar/graphql', gql`...`)
      * ```
      */
-    function request(url, document, variables) {
+    function request(url, document, variables, requestHeaders) {
         return __awaiter(this, void 0, void 0, function () {
             var client;
             return __generator(this, function (_a) {
                 client = new GraphQLClient(url);
-                return [2 /*return*/, client.request(document, variables)];
+                return [
+                    2 /*return*/,
+                    client.request(document, variables, requestHeaders),
+                ];
             });
         });
     }
     exports.request = request;
+    /**
+     * Send a batch of GraphQL Document to the GraphQL server for exectuion.
+     *
+     * @example
+     *
+     * ```ts
+     * // You can pass a raw string
+     *
+     * await batchRequests('https://foo.bar/graphql', [
+     * {
+     *  query: `
+     *   {
+     *     query {
+     *       users
+     *     }
+     *   }`
+     * },
+     * {
+     *   query: `
+     *   {
+     *     query {
+     *       users
+     *     }
+     *   }`
+     * }])
+     *
+     * // You can also pass a GraphQL DocumentNode as query. Convenient if you
+     * // are using graphql-tag package.
+     *
+     * import gql from 'graphql-tag'
+     *
+     * await batchRequests('https://foo.bar/graphql', [{ query: gql`...` }])
+     * ```
+     */
+    function batchRequests(url, documents, requestHeaders) {
+        return __awaiter(this, void 0, void 0, function () {
+            var client;
+            return __generator(this, function (_a) {
+                client = new GraphQLClient(url);
+                return [
+                    2 /*return*/,
+                    client.batchRequests(documents, requestHeaders),
+                ];
+            });
+        });
+    }
+    exports.batchRequests = batchRequests;
     exports.default = request;
     /**
      * todo
@@ -23191,8 +25574,24 @@ types.ClientError = ClientError;
      * helpers
      */
     function resolveRequestDocument(document) {
-        if (typeof document === 'string') return document;
-        return printer_1.print(document);
+        var _a;
+        if (typeof document === 'string') return { query: document };
+        var operationName = undefined;
+        var operationDefinitions = document.definitions.filter(function (
+            definition
+        ) {
+            return definition.kind === 'OperationDefinition';
+        });
+        if (operationDefinitions.length === 1) {
+            operationName =
+                (_a = operationDefinitions[0].name) === null || _a === void 0
+                    ? void 0
+                    : _a.value;
+        }
+        return {
+            query: printer_1.print(document),
+            operationName: operationName,
+        };
     }
     /**
      * Convenience passthrough template tag to get the benefits of tooling for the gql template tag. This does not actually parse the input into a GraphQL DocumentNode like graphql-tag package does. It just returns the string with any variables given interpolated. Can save you a bit of performance and having to install another package.
@@ -23256,7 +25655,7 @@ const getPool = async (poolId, blockNumber, testnet) => {
   `;
     let query;
     if (blockNumber) {
-        query = graphql_request_1.gql`
+        query = (0, graphql_request_1.gql)`
       query getPool($poolId: ID!, $blockNumber: Int!) {
         pools(where: { id: $poolId }, block: { number: $blockNumber }) {
           ${data}
@@ -23264,7 +25663,7 @@ const getPool = async (poolId, blockNumber, testnet) => {
       }
     `;
     } else {
-        query = graphql_request_1.gql`
+        query = (0, graphql_request_1.gql)`
       query getPool($poolId: ID!) {
         pools(where: { id: $poolId }) {
           ${data}
@@ -23272,7 +25671,7 @@ const getPool = async (poolId, blockNumber, testnet) => {
       }
     `;
     }
-    const result = await graphql_request_1.request(
+    const result = await (0, graphql_request_1.request)(
         testnet
             ? 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-kovan-v2'
             : 'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-v2',
@@ -23285,30 +25684,6 @@ const getPool = async (poolId, blockNumber, testnet) => {
     return null;
 };
 subgraph.getPool = getPool;
-
-var bigNumber = {};
-
-var require$$0 = /*@__PURE__*/ getAugmentedNamespace(bignumber);
-
-(function (exports) {
-    Object.defineProperty(exports, '__esModule', { value: true });
-    exports.scaleAll = exports.scale = exports.bn = void 0;
-    const bignumber_js_1 = require$$0;
-    bignumber_js_1.BigNumber.config({
-        EXPONENTIAL_AT: [-100, 100],
-        ROUNDING_MODE: 1,
-        DECIMAL_PLACES: 18,
-    });
-    exports.default = bignumber_js_1.BigNumber;
-    const bn = (value) => new bignumber_js_1.BigNumber(value);
-    exports.bn = bn;
-    const scale = (value, decimalPlaces) =>
-        exports.bn(value).times(exports.bn(10).pow(decimalPlaces));
-    exports.scale = scale;
-    const scaleAll = (values, decimalPlaces) =>
-        values.map((x) => exports.scale(x, decimalPlaces));
-    exports.scaleAll = scaleAll;
-})(bigNumber);
 
 var common = {};
 
@@ -23325,666 +25700,7 @@ var common = {};
     exports.shallowCopyAll = shallowCopyAll;
 })(common);
 
-var base = {};
-
-var math$5 = {};
-
-(function (exports) {
-    // Ported from Solidity:
-    // https://github.com/balancer-labs/balancer-v2-monorepo/blob/ce70f7663e0ac94b25ed60cb86faaa8199fd9e13/pkg/solidity-utils/contracts/math/Math.sol
-    Object.defineProperty(exports, '__esModule', { value: true });
-    exports.divUp =
-        exports.divDown =
-        exports.div =
-        exports.mul =
-        exports.min =
-        exports.max =
-        exports.sub =
-        exports.add =
-        exports.TWO =
-        exports.ONE =
-        exports.ZERO =
-            void 0;
-    const big_number_1 = bigNumber;
-    exports.ZERO = big_number_1.bn(0);
-    exports.ONE = big_number_1.bn(1);
-    exports.TWO = big_number_1.bn(2);
-    const add = (a, b) => {
-        return a.plus(b);
-    };
-    exports.add = add;
-    const sub = (a, b) => {
-        if (b.gt(a)) {
-            throw new Error('SUB_OVERFLOW');
-        }
-        return a.minus(b);
-    };
-    exports.sub = sub;
-    const max = (a, b) => {
-        return a.gte(b) ? a : b;
-    };
-    exports.max = max;
-    const min = (a, b) => {
-        return a.lt(b) ? a : b;
-    };
-    exports.min = min;
-    const mul = (a, b) => {
-        return a.times(b);
-    };
-    exports.mul = mul;
-    const div = (a, b, roundUp) => {
-        return roundUp ? exports.divUp(a, b) : exports.divDown(a, b);
-    };
-    exports.div = div;
-    const divDown = (a, b) => {
-        if (b.isZero()) {
-            throw new Error('ZERO_DIVISION');
-        }
-        return a.idiv(b);
-    };
-    exports.divDown = divDown;
-    const divUp = (a, b) => {
-        if (b.isZero()) {
-            throw new Error('ZERO_DIVISION');
-        }
-        return a.isZero()
-            ? exports.ZERO
-            : exports.ONE.plus(a.minus(exports.ONE).idiv(b));
-    };
-    exports.divUp = divUp;
-})(math$5);
-
-Object.defineProperty(base, '__esModule', { value: true });
-const big_number_1$3 = bigNumber;
-const math$4 = math$5;
-class BasePool {
-    // ---------------------- Constructor ----------------------
-    constructor(params) {
-        this.MIN_SWAP_FEE_PERCENTAGE = big_number_1$3.bn('0.000001'); // 0.0001%
-        this.MAX_SWAP_FEE_PERCENTAGE = big_number_1$3.bn('0.1'); // 10%
-        this._query = false;
-        this._id = params.id;
-        this._address = params.address;
-        this._bptTotalSupply = params.bptTotalSupply;
-        this.setSwapFeePercentage(params.swapFeePercentage);
-        if (params.query) {
-            this._query = params.query;
-        }
-    }
-    // ---------------------- Getters ----------------------
-    get id() {
-        return this._id;
-    }
-    get address() {
-        return this._address;
-    }
-    get bptTotalSupply() {
-        return this._bptTotalSupply;
-    }
-    get swapFeePercentage() {
-        return this._swapFeePercentage;
-    }
-    get query() {
-        return this._query;
-    }
-    // ---------------------- Setters ----------------------
-    setSwapFeePercentage(swapFeePercentage) {
-        if (
-            big_number_1$3
-                .bn(swapFeePercentage)
-                .lt(this.MIN_SWAP_FEE_PERCENTAGE)
-        ) {
-            throw new Error('MIN_SWAP_FEE_PERCENTAGE');
-        }
-        if (
-            big_number_1$3
-                .bn(swapFeePercentage)
-                .gt(this.MAX_SWAP_FEE_PERCENTAGE)
-        ) {
-            throw new Error('MAX_SWAP_FEE_PERCENTAGE');
-        }
-        this._swapFeePercentage = swapFeePercentage;
-    }
-    setQuery(query) {
-        this._query = query;
-    }
-    // ---------------------- Internal ----------------------
-    _upScale(amount, decimals) {
-        return math$4.mul(
-            big_number_1$3.scale(amount, decimals),
-            big_number_1$3.bn(10).pow(18 - decimals)
-        );
-    }
-    _downScaleDown(amount, decimals) {
-        return big_number_1$3.scale(
-            math$4.divDown(
-                big_number_1$3.bn(amount),
-                big_number_1$3.bn(10).pow(18 - decimals)
-            ),
-            -decimals
-        );
-    }
-    _downScaleUp(amount, decimals) {
-        return big_number_1$3.scale(
-            math$4.divUp(
-                big_number_1$3.bn(amount),
-                big_number_1$3.bn(10).pow(18 - decimals)
-            ),
-            -decimals
-        );
-    }
-}
-base.default = BasePool;
-
 var math$3 = {};
-
-var fixedPoint = {};
-
-var logExp = {};
-
-(function (exports) {
-    // Ported from Solidity:
-    // https://github.com/balancer-labs/balancer-core-v2/blob/70843e6a61ad11208c1cfabf5cfe15be216ca8d3/pkg/solidity-utils/contracts/math/LogExpMath.sol
-    Object.defineProperty(exports, '__esModule', { value: true });
-    exports.ln = exports.log = exports.exp = exports.pow = void 0;
-    const big_number_1 = bigNumber;
-    // All fixed point multiplications and divisions are inlined
-    // This means we need to divide by ONE when multiplying two numbers, and multiply by ONE when dividing them
-    // All arguments and return values are 18 decimal fixed point numbers
-    const ONE_18 = big_number_1.bn('1000000000000000000'); // 1e18
-    // Internally, intermediate values are computed with higher precision as 20 decimal fixed point numbers, and in the case of ln36, 36 decimals
-    const ONE_20 = big_number_1.bn('100000000000000000000'); // 1e20
-    const ONE_36 = big_number_1.bn('1000000000000000000000000000000000000'); // 1e36
-    // The domain of natural exponentiation is bound by the word size and number of decimals used
-    // Because internally the result will be stored using 20 decimals, the largest possible result is
-    // (2^255 - 1) / 10^20, which makes the largest exponent ln((2^255 - 1) / 10^20) = 130.700829182905140221
-    // The smallest possible result is 10^(-18), which makes largest negative argument
-    // ln(10^(-18)) = -41.446531673892822312.
-    // We use 130.0 and -41.0 to have some safety margin
-    const MAX_NATURAL_EXPONENT = big_number_1.bn('130000000000000000000'); // 130e18
-    const MIN_NATURAL_EXPONENT = big_number_1.bn('-41000000000000000000'); // (-41)e18
-    // Bounds for ln_36's argument
-    // Both ln(0.9) and ln(1.1) can be represented with 36 decimal places in a fixed point 256 bit integer
-    const LN_36_LOWER_BOUND = ONE_18.minus(
-        big_number_1.bn('100000000000000000')
-    ); // 1e18 - 1e17
-    const LN_36_UPPER_BOUND = ONE_18.plus(
-        big_number_1.bn('100000000000000000')
-    ); // 1e18 + 1e17
-    const MILD_EXPONENT_BOUND = big_number_1.bn(2).pow(254).idiv(ONE_20);
-    // 18 decimal constants
-    const x0 = big_number_1.bn('128000000000000000000'); // 2ˆ7
-    const a0 = big_number_1.bn(
-        '38877084059945950922200000000000000000000000000000000000'
-    ); // eˆ(x0) (no decimals)
-    const x1 = big_number_1.bn('64000000000000000000'); // 2ˆ6
-    const a1 = big_number_1.bn('6235149080811616882910000000'); // eˆ(x1) (no decimals)
-    // 20 decimal constants
-    const x2 = big_number_1.bn('3200000000000000000000'); // 2ˆ5
-    const a2 = big_number_1.bn('7896296018268069516100000000000000'); // eˆ(x2)
-    const x3 = big_number_1.bn('1600000000000000000000'); // 2ˆ4
-    const a3 = big_number_1.bn('888611052050787263676000000'); // eˆ(x3)
-    const x4 = big_number_1.bn('800000000000000000000'); // 2ˆ3
-    const a4 = big_number_1.bn('298095798704172827474000'); // eˆ(x4)
-    const x5 = big_number_1.bn('400000000000000000000'); // 2ˆ2
-    const a5 = big_number_1.bn('5459815003314423907810'); // eˆ(x5)
-    const x6 = big_number_1.bn('200000000000000000000'); // 2ˆ1
-    const a6 = big_number_1.bn('738905609893065022723'); // eˆ(x6)
-    const x7 = big_number_1.bn('100000000000000000000'); // 2ˆ0
-    const a7 = big_number_1.bn('271828182845904523536'); // eˆ(x7)
-    const x8 = big_number_1.bn('50000000000000000000'); // 2ˆ(-1)
-    const a8 = big_number_1.bn('164872127070012814685'); // eˆ(x8)
-    const x9 = big_number_1.bn('25000000000000000000'); // 2ˆ(-2)
-    const a9 = big_number_1.bn('128402541668774148407'); // eˆ(x9)
-    const x10 = big_number_1.bn('12500000000000000000'); // 2ˆ(-3)
-    const a10 = big_number_1.bn('113314845306682631683'); // eˆ(x10)
-    const x11 = big_number_1.bn('6250000000000000000'); // 2ˆ(-4)
-    const a11 = big_number_1.bn('106449445891785942956'); // eˆ(x11)
-    const pow = (x, y) => {
-        if (y.isZero()) {
-            // We solve the 0^0 indetermination by making it equal one.
-            return ONE_18;
-        }
-        if (x.isZero()) {
-            return big_number_1.bn(0);
-        }
-        // Instead of computing x^y directly, we instead rely on the properties of logarithms and exponentiation to
-        // arrive at that result. In particular, exp(ln(x)) = x, and ln(x^y) = y * ln(x). This means
-        // x^y = exp(y * ln(x)).
-        // The ln function takes a signed value, so we need to make sure x fits in the signed 256 bit range.
-        if (x.gte(big_number_1.bn(2).pow(255))) {
-            throw new Error('X_OUT_OF_BOUNDS');
-        }
-        // We will compute y * ln(x) in a single step. Depending on the value of x, we can either use ln or ln_36. In
-        // both cases, we leave the division by ONE_18 (due to fixed point multiplication) to the end.
-        // This prevents y * ln(x) from overflowing, and at the same time guarantees y fits in the signed 256 bit range.
-        if (y.gte(MILD_EXPONENT_BOUND)) {
-            throw new Error('Y_OUT_OF_BOUNDS');
-        }
-        let logx_times_y;
-        if (LN_36_LOWER_BOUND.lt(x) && x.lt(LN_36_UPPER_BOUND)) {
-            let ln_36_x = _ln_36(x);
-            // ln_36_x has 36 decimal places, so multiplying by y_int256 isn't as straightforward, since we can't just
-            // bring y_int256 to 36 decimal places, as it might overflow. Instead, we perform two 18 decimal
-            // multiplications and add the results: one with the first 18 decimals of ln_36_x, and one with the
-            // (downscaled) last 18 decimals.
-            logx_times_y = ln_36_x
-                .idiv(ONE_18)
-                .times(y)
-                .plus(ln_36_x.mod(ONE_18).times(y).idiv(ONE_18));
-        } else {
-            logx_times_y = _ln(x).times(y);
-        }
-        logx_times_y = logx_times_y.idiv(ONE_18);
-        // Finally, we compute exp(y * ln(x)) to arrive at x^y
-        if (
-            logx_times_y.lt(MIN_NATURAL_EXPONENT) ||
-            logx_times_y.gt(MAX_NATURAL_EXPONENT)
-        ) {
-            throw new Error('PRODUCT_OUT_OF_BOUNDS');
-        }
-        return exports.exp(logx_times_y);
-    };
-    exports.pow = pow;
-    const exp = (x) => {
-        if (x.lt(MIN_NATURAL_EXPONENT) || x.gt(MAX_NATURAL_EXPONENT)) {
-            throw new Error('INVALID_EXPONENT');
-        }
-        if (x.lt(0)) {
-            // We only handle positive exponents: e^(-x) is computed as 1 / e^x. We can safely make x positive since it
-            // fits in the signed 256 bit range (as it is larger than MIN_NATURAL_EXPONENT).
-            // Fixed point division requires multiplying by ONE_18.
-            return ONE_18.times(ONE_18).idiv(exports.exp(x.negated()));
-        }
-        // First, we use the fact that e^(x+y) = e^x * e^y to decompose x into a sum of powers of two, which we call x_n,
-        // where x_n == 2^(7 - n), and e^x_n = a_n has been precomputed. We choose the first x_n, x0, to equal 2^7
-        // because all larger powers are larger than MAX_NATURAL_EXPONENT, and therefore not present in the
-        // decomposition.
-        // At the end of this process we will have the product of all e^x_n = a_n that apply, and the remainder of this
-        // decomposition, which will be lower than the smallest x_n.
-        // exp(x) = k_0 * a_0 * k_1 * a_1 * ... + k_n * a_n * exp(remainder), where each k_n equals either 0 or 1.
-        // We mutate x by subtracting x_n, making it the remainder of the decomposition.
-        // The first two a_n (e^(2^7) and e^(2^6)) are too large if stored as 18 decimal numbers, and could cause
-        // intermediate overflows. Instead we store them as plain integers, with 0 decimals.
-        // Additionally, x0 + x1 is larger than MAX_NATURAL_EXPONENT, which means they will not both be present in the
-        // decomposition.
-        // For each x_n, we test if that term is present in the decomposition (if x is larger than it), and if so deduct
-        // it and compute the accumulated product.
-        let firstAN;
-        if (x.gte(x0)) {
-            x = x.minus(x0);
-            firstAN = a0;
-        } else if (x.gte(x1)) {
-            x = x.minus(x1);
-            firstAN = a1;
-        } else {
-            firstAN = big_number_1.bn(1); // One with no decimal places
-        }
-        // We now transform x into a 20 decimal fixed point number, to have enhanced precision when computing the
-        // smaller terms.
-        x = x.times(100);
-        // `product` is the accumulated product of all a_n (except a0 and a1), which starts at 20 decimal fixed point
-        // one. Recall that fixed point multiplication requires dividing by ONE_20.
-        let product = ONE_20;
-        if (x.gte(x2)) {
-            x = x.minus(x2);
-            product = product.times(a2).idiv(ONE_20);
-        }
-        if (x.gte(x3)) {
-            x = x.minus(x3);
-            product = product.times(a3).idiv(ONE_20);
-        }
-        if (x.gte(x4)) {
-            x = x.minus(x4);
-            product = product.times(a4).idiv(ONE_20);
-        }
-        if (x.gte(x5)) {
-            x = x.minus(x5);
-            product = product.times(a5).idiv(ONE_20);
-        }
-        if (x.gte(x6)) {
-            x = x.minus(x6);
-            product = product.times(a6).idiv(ONE_20);
-        }
-        if (x.gte(x7)) {
-            x = x.minus(x7);
-            product = product.times(a7).idiv(ONE_20);
-        }
-        if (x.gte(x8)) {
-            x = x.minus(x8);
-            product = product.times(a8).idiv(ONE_20);
-        }
-        if (x.gte(x9)) {
-            x = x.minus(x9);
-            product = product.times(a9).idiv(ONE_20);
-        }
-        // x10 and x11 are unnecessary here since we have high enough precision already.
-        // Now we need to compute e^x, where x is small (in particular, it is smaller than x9). We use the Taylor series
-        // expansion for e^x: 1 + x + (x^2 / 2!) + (x^3 / 3!) + ... + (x^n / n!).
-        let seriesSum = ONE_20; // The initial one in the sum, with 20 decimal places.
-        let term; // Each term in the sum, where the nth term is (x^n / n!).
-        // The first term is simply x.
-        term = x;
-        seriesSum = seriesSum.plus(term);
-        // Each term (x^n / n!) equals the previous one times x, divided by n. Since x is a fixed point number,
-        // multiplying by it requires dividing by ONE_20, but dividing by the non-fixed point n values does not.
-        term = term.times(x).idiv(ONE_20).idiv(2);
-        seriesSum = seriesSum.plus(term);
-        term = term.times(x).idiv(ONE_20).idiv(3);
-        seriesSum = seriesSum.plus(term);
-        term = term.times(x).idiv(ONE_20).idiv(4);
-        seriesSum = seriesSum.plus(term);
-        term = term.times(x).idiv(ONE_20).idiv(5);
-        seriesSum = seriesSum.plus(term);
-        term = term.times(x).idiv(ONE_20).idiv(6);
-        seriesSum = seriesSum.plus(term);
-        term = term.times(x).idiv(ONE_20).idiv(7);
-        seriesSum = seriesSum.plus(term);
-        term = term.times(x).idiv(ONE_20).idiv(8);
-        seriesSum = seriesSum.plus(term);
-        term = term.times(x).idiv(ONE_20).idiv(9);
-        seriesSum = seriesSum.plus(term);
-        term = term.times(x).idiv(ONE_20).idiv(10);
-        seriesSum = seriesSum.plus(term);
-        term = term.times(x).idiv(ONE_20).idiv(11);
-        seriesSum = seriesSum.plus(term);
-        term = term.times(x).idiv(ONE_20).idiv(12);
-        seriesSum = seriesSum.plus(term);
-        // 12 Taylor terms are sufficient for 18 decimal precision.
-        // We now have the first a_n (with no decimals), and the product of all other a_n present, and the Taylor
-        // approximation of the exponentiation of the remainder (both with 20 decimals). All that remains is to multiply
-        // all three (one 20 decimal fixed point multiplication, dividing by ONE_20, and one integer multiplication),
-        // and then drop two digits to return an 18 decimal value.
-        return product.times(seriesSum).idiv(ONE_20).times(firstAN).idiv(100);
-    };
-    exports.exp = exp;
-    const log = (arg, base) => {
-        // This performs a simple base change: log(arg, base) = ln(arg) / ln(base).
-        // Both logBase and logArg are computed as 36 decimal fixed point numbers, either by using ln_36, or by
-        // upscaling.
-        let logBase;
-        if (LN_36_LOWER_BOUND.lt(base) && base.lt(LN_36_UPPER_BOUND)) {
-            logBase = _ln_36(base);
-        } else {
-            logBase = _ln(base).times(ONE_18);
-        }
-        let logArg;
-        if (LN_36_LOWER_BOUND.lt(arg) && arg.lt(LN_36_UPPER_BOUND)) {
-            logArg = _ln_36(arg);
-        } else {
-            logArg = _ln(arg).times(ONE_18);
-        }
-        // When dividing, we multiply by ONE_18 to arrive at a result with 18 decimal places
-        return logArg.times(ONE_18).idiv(logBase);
-    };
-    exports.log = log;
-    const ln = (a) => {
-        // The real natural logarithm is not defined for negative numbers or zero.
-        if (a.lte(0)) {
-            throw new Error('OUT_OF_BOUNDS');
-        }
-        if (LN_36_LOWER_BOUND.lt(a) && a.lt(LN_36_UPPER_BOUND)) {
-            return _ln_36(a).idiv(ONE_18);
-        } else {
-            return _ln(a);
-        }
-    };
-    exports.ln = ln;
-    const _ln = (a) => {
-        if (a.lt(ONE_18)) {
-            // Since ln(a^k) = k * ln(a), we can compute ln(a) as ln(a) = ln((1/a)^(-1)) = - ln((1/a))
-            // If a is less than one, 1/a will be greater than one, and this if statement will not be entered in the recursive call
-            // Fixed point division requires multiplying by ONE_18
-            return _ln(ONE_18.times(ONE_18).idiv(a)).negated();
-        }
-        // First, we use the fact that ln^(a * b) = ln(a) + ln(b) to decompose ln(a) into a sum of powers of two, which
-        // we call x_n, where x_n == 2^(7 - n), which are the natural logarithm of precomputed quantities a_n (that is,
-        // ln(a_n) = x_n). We choose the first x_n, x0, to equal 2^7 because the exponential of all larger powers cannot
-        // be represented as 18 fixed point decimal numbers in 256 bits, and are therefore larger than a.
-        // At the end of this process we will have the sum of all x_n = ln(a_n) that apply, and the remainder of this
-        // decomposition, which will be lower than the smallest a_n.
-        // ln(a) = k_0 * x_0 + k_1 * x_1 + ... + k_n * x_n + ln(remainder), where each k_n equals either 0 or 1
-        // We mutate a by subtracting a_n, making it the remainder of the decomposition
-        // For reasons related to how `exp` works, the first two a_n (e^(2^7) and e^(2^6)) are not stored as fixed point
-        // numbers with 18 decimals, but instead as plain integers with 0 decimals, so we need to multiply them by
-        // ONE_18 to convert them to fixed point.
-        // For each a_n, we test if that term is present in the decomposition (if a is larger than it), and if so divide
-        // by it and compute the accumulated sum.
-        let sum = big_number_1.bn(0);
-        if (a.gte(a0.times(ONE_18))) {
-            a = a.idiv(a0); // Integer, not fixed point division
-            sum = sum.plus(x0);
-        }
-        if (a.gte(a1.times(ONE_18))) {
-            a = a.idiv(a1); // Integer, not fixed point division
-            sum = sum.plus(x1);
-        }
-        // All other a_n and x_n are stored as 20 digit fixed point numbers, so we convert the sum and a to this format.
-        sum = sum.times(100);
-        a = a.times(100);
-        // Because further a_n are  20 digit fixed point numbers, we multiply by ONE_20 when dividing by them.
-        if (a.gte(a2)) {
-            a = a.times(ONE_20).idiv(a2);
-            sum = sum.plus(x2);
-        }
-        if (a.gte(a3)) {
-            a = a.times(ONE_20).idiv(a3);
-            sum = sum.plus(x3);
-        }
-        if (a.gte(a4)) {
-            a = a.times(ONE_20).idiv(a4);
-            sum = sum.plus(x4);
-        }
-        if (a.gte(a5)) {
-            a = a.times(ONE_20).idiv(a5);
-            sum = sum.plus(x5);
-        }
-        if (a.gte(a6)) {
-            a = a.times(ONE_20).idiv(a6);
-            sum = sum.plus(x6);
-        }
-        if (a.gte(a7)) {
-            a = a.times(ONE_20).idiv(a7);
-            sum = sum.plus(x7);
-        }
-        if (a.gte(a8)) {
-            a = a.times(ONE_20).idiv(a8);
-            sum = sum.plus(x8);
-        }
-        if (a.gte(a9)) {
-            a = a.times(ONE_20).idiv(a9);
-            sum = sum.plus(x9);
-        }
-        if (a.gte(a10)) {
-            a = a.times(ONE_20).idiv(a10);
-            sum = sum.plus(x10);
-        }
-        if (a.gte(a11)) {
-            a = a.times(ONE_20).idiv(a11);
-            sum = sum.plus(x11);
-        }
-        // a is now a small number (smaller than a_11, which roughly equals 1.06). This means we can use a Taylor series
-        // that converges rapidly for values of `a` close to one - the same one used in ln_36.
-        // Let z = (a - 1) / (a + 1).
-        // ln(a) = 2 * (z + z^3 / 3 + z^5 / 5 + z^7 / 7 + ... + z^(2 * n + 1) / (2 * n + 1))
-        // Recall that 20 digit fixed point division requires multiplying by ONE_20, and multiplication requires
-        // division by ONE_20.
-        const z = a.minus(ONE_20).times(ONE_20).idiv(a.plus(ONE_20));
-        const z_squared = z.times(z).idiv(ONE_20);
-        // num is the numerator of the series: the z^(2 * n + 1) term
-        let num = z;
-        // seriesSum holds the accumulated sum of each term in the series, starting with the initial z
-        let seriesSum = num;
-        // In each step, the numerator is multiplied by z^2
-        num = num.times(z_squared).idiv(ONE_20);
-        seriesSum = seriesSum.plus(num.idiv(3));
-        num = num.times(z_squared).idiv(ONE_20);
-        seriesSum = seriesSum.plus(num.idiv(5));
-        num = num.times(z_squared).idiv(ONE_20);
-        seriesSum = seriesSum.plus(num.idiv(7));
-        num = num.times(z_squared).idiv(ONE_20);
-        seriesSum = seriesSum.plus(num.idiv(9));
-        num = num.times(z_squared).idiv(ONE_20);
-        seriesSum = seriesSum.plus(num.idiv(11));
-        // 6 Taylor terms are sufficient for 36 decimal precision.
-        // Finally, we multiply by 2 (non fixed point) to compute ln(remainder)
-        seriesSum = seriesSum.times(2);
-        // We now have the sum of all x_n present, and the Taylor approximation of the logarithm of the remainder (both
-        // with 20 decimals). All that remains is to sum these two, and then drop two digits to return a 18 decimal
-        // value.
-        return sum.plus(seriesSum).idiv(100);
-    };
-    const _ln_36 = (x) => {
-        // Since ln(1) = 0, a value of x close to one will yield a very small result, which makes using 36 digits worthwhile
-        // First, we transform x to a 36 digit fixed point value
-        x = x.times(ONE_18);
-        // We will use the following Taylor expansion, which converges very rapidly. Let z = (x - 1) / (x + 1)
-        // ln(x) = 2 * (z + z^3 / 3 + z^5 / 5 + z^7 / 7 + ... + z^(2 * n + 1) / (2 * n + 1))
-        // Recall that 36 digit fixed point division requires multiplying by ONE_36, and multiplication requires division by ONE_36
-        const z = x.minus(ONE_36).times(ONE_36).idiv(x.plus(ONE_36));
-        const z_squared = z.times(z).idiv(ONE_36);
-        // num is the numerator of the series: the z^(2 * n + 1) term
-        let num = z;
-        // seriesSum holds the accumulated sum of each term in the series, starting with the initial z
-        let seriesSum = num;
-        // In each step, the numerator is multiplied by z^2
-        num = num.times(z_squared).idiv(ONE_36);
-        seriesSum = seriesSum.plus(num.idiv(3));
-        num = num.times(z_squared).idiv(ONE_36);
-        seriesSum = seriesSum.plus(num.idiv(5));
-        num = num.times(z_squared).idiv(ONE_36);
-        seriesSum = seriesSum.plus(num.idiv(7));
-        num = num.times(z_squared).idiv(ONE_36);
-        seriesSum = seriesSum.plus(num.idiv(9));
-        num = num.times(z_squared).idiv(ONE_36);
-        seriesSum = seriesSum.plus(num.idiv(11));
-        num = num.times(z_squared).idiv(ONE_36);
-        seriesSum = seriesSum.plus(num.idiv(13));
-        num = num.times(z_squared).idiv(ONE_36);
-        seriesSum = seriesSum.plus(num.idiv(15));
-        // 8 Taylor terms are sufficient for 36 decimal precision
-        // All that remains is multiplying by 2 (non fixed point)
-        return seriesSum.times(2);
-    };
-})(logExp);
-
-(function (exports) {
-    // Ported from Solidity:
-    // https://github.com/balancer-labs/balancer-core-v2/blob/70843e6a61ad11208c1cfabf5cfe15be216ca8d3/pkg/solidity-utils/contracts/math/FixedPoint.sol
-    Object.defineProperty(exports, '__esModule', { value: true });
-    exports.complement =
-        exports.powUp =
-        exports.powDown =
-        exports.divUp =
-        exports.divDown =
-        exports.mulUp =
-        exports.mulDown =
-        exports.sub =
-        exports.add =
-        exports.MIN_POW_BASE_FREE_EXPONENT =
-        exports.MAX_POW_RELATIVE_ERROR =
-        exports.ONE =
-        exports.ZERO =
-            void 0;
-    const big_number_1 = bigNumber;
-    const logExp$1 = logExp;
-    exports.ZERO = big_number_1.bn(0);
-    exports.ONE = big_number_1.bn('1000000000000000000'); // 10^18
-    exports.MAX_POW_RELATIVE_ERROR = big_number_1.bn(10000); // 10^(-14)
-    // Minimum base for the power function when the exponent is 'free' (larger than ONE)
-    exports.MIN_POW_BASE_FREE_EXPONENT = big_number_1.bn('700000000000000000'); // 0.7e18
-    const add = (a, b) => {
-        // Fixed Point addition is the same as regular checked addition
-        return a.plus(b);
-    };
-    exports.add = add;
-    const sub = (a, b) => {
-        // Fixed Point subtraction is the same as regular checked subtraction
-        if (b.gt(a)) {
-            throw new Error('SUB_OVERFLOW');
-        }
-        return a.minus(b);
-    };
-    exports.sub = sub;
-    const mulDown = (a, b) => {
-        return a.times(b).idiv(exports.ONE);
-    };
-    exports.mulDown = mulDown;
-    const mulUp = (a, b) => {
-        const product = a.times(b);
-        if (product.isZero()) {
-            return product;
-        } else {
-            // The traditional divUp formula is:
-            // divUp(x, y) := (x + y - 1) / y
-            // To avoid intermediate overflow in the addition, we distribute the division and get:
-            // divUp(x, y) := (x - 1) / y + 1
-            // Note that this requires x != 0, which we already tested for
-            return product
-                .minus(big_number_1.bn(1))
-                .idiv(exports.ONE)
-                .plus(big_number_1.bn(1));
-        }
-    };
-    exports.mulUp = mulUp;
-    const divDown = (a, b) => {
-        if (b.isZero()) {
-            throw new Error('ZERO_DIVISION');
-        }
-        if (a.isZero()) {
-            return a;
-        } else {
-            return a.times(exports.ONE).idiv(b);
-        }
-    };
-    exports.divDown = divDown;
-    const divUp = (a, b) => {
-        if (b.isZero()) {
-            throw new Error('ZERO_DIVISION');
-        }
-        if (a.isZero()) {
-            return a;
-        } else {
-            // The traditional divUp formula is:
-            // divUp(x, y) := (x + y - 1) / y
-            // To avoid intermediate overflow in the addition, we distribute the division and get:
-            // divUp(x, y) := (x - 1) / y + 1
-            // Note that this requires x != 0, which we already tested for.
-            return a
-                .times(exports.ONE)
-                .minus(big_number_1.bn(1))
-                .idiv(b)
-                .plus(big_number_1.bn(1));
-        }
-    };
-    exports.divUp = divUp;
-    const powDown = (x, y) => {
-        const raw = logExp$1.pow(x, y);
-        const maxError = exports.add(
-            exports.mulUp(raw, exports.MAX_POW_RELATIVE_ERROR),
-            big_number_1.bn(1)
-        );
-        if (raw.lt(maxError)) {
-            return big_number_1.bn(0);
-        } else {
-            return exports.sub(raw, maxError);
-        }
-    };
-    exports.powDown = powDown;
-    const powUp = (x, y) => {
-        const raw = logExp$1.pow(x, y);
-        const maxError = exports.add(
-            exports.mulUp(raw, exports.MAX_POW_RELATIVE_ERROR),
-            big_number_1.bn(1)
-        );
-        return exports.add(raw, maxError);
-    };
-    exports.powUp = powUp;
-    const complement = (x) => {
-        return x.lt(exports.ONE) ? exports.ONE.minus(x) : big_number_1.bn(0);
-    };
-    exports.complement = complement;
-})(fixedPoint);
 
 (function (exports) {
     // Ported from Solidity:
@@ -24006,10 +25722,10 @@ var logExp = {};
             void 0;
     const big_number_1 = bigNumber;
     const fp = fixedPoint;
-    const math = math$5;
-    exports.MIN_AMP = big_number_1.bn(1);
-    exports.MAX_AMP = big_number_1.bn(5000);
-    exports.AMP_PRECISION = big_number_1.bn(1000);
+    const math = math$8;
+    exports.MIN_AMP = (0, big_number_1.bn)(1);
+    exports.MAX_AMP = (0, big_number_1.bn)(5000);
+    exports.AMP_PRECISION = (0, big_number_1.bn)(1000);
     exports.MAX_STABLE_TOKENS = 5;
     // Computes the invariant given the current balances, using the Newton-Raphson approximation.
     // The amplification parameter equals: A n^(n-1)
@@ -24024,7 +25740,7 @@ var logExp = {};
     **********************************************************************************************/
         // We support rounding up or down.
         let sum = math.ZERO;
-        let numTokens = big_number_1.bn(balances.length);
+        let numTokens = (0, big_number_1.bn)(balances.length);
         for (let i = 0; i < balances.length; i++) {
             sum = fp.add(sum, balances[i]);
         }
@@ -24107,7 +25823,7 @@ var logExp = {};
         }
         // Amount out, so we round down overall.
         // Given that we need to have a greater final balance out, the invariant needs to be rounded up
-        const invariant = exports._calculateInvariant(
+        const invariant = (0, exports._calculateInvariant)(
             amplificationParameter,
             balances,
             true
@@ -24151,7 +25867,7 @@ var logExp = {};
     **************************************************************************************************************/
         // Amount in, so we round up overall.
         // Given that we need to have a greater final balance in, the invariant needs to be rounded up
-        const invariant = exports._calculateInvariant(
+        const invariant = (0, exports._calculateInvariant)(
             amplificationParameter,
             balances,
             true
@@ -24232,12 +25948,12 @@ var logExp = {};
             newBalances[i] = fp.add(balances[i], amountInWithoutFee);
         }
         // Get current and new invariants, taking swap fees into account
-        const currentInvariant = exports._calculateInvariant(
+        const currentInvariant = (0, exports._calculateInvariant)(
             amp,
             balances,
             true
         );
-        const newInvariant = exports._calculateInvariant(
+        const newInvariant = (0, exports._calculateInvariant)(
             amp,
             newBalances,
             false
@@ -24261,7 +25977,7 @@ var logExp = {};
     ) => {
         // Token in, so we round up overall.
         // Get the current invariant
-        const currentInvariant = exports._calculateInvariant(
+        const currentInvariant = (0, exports._calculateInvariant)(
             amp,
             balances,
             true
@@ -24356,12 +26072,12 @@ var logExp = {};
             newBalances[i] = fp.sub(balances[i], amountOutWithFee);
         }
         // Get current and new invariants, taking into account swap fees
-        const currentInvariant = exports._calculateInvariant(
+        const currentInvariant = (0, exports._calculateInvariant)(
             amp,
             balances,
             true
         );
-        const newInvariant = exports._calculateInvariant(
+        const newInvariant = (0, exports._calculateInvariant)(
             amp,
             newBalances,
             false
@@ -24381,7 +26097,7 @@ var logExp = {};
     ) => {
         // Token out, so we round down overall.
         // Get the current and new invariants. Since we need a bigger new invariant, we round the current one up.
-        const currentInvariant = exports._calculateInvariant(
+        const currentInvariant = (0, exports._calculateInvariant)(
             amp,
             balances,
             true
@@ -24498,7 +26214,7 @@ var logExp = {};
         tokenIndex
     ) => {
         // Rounds result up overall
-        const numTokens = big_number_1.bn(balances.length);
+        const numTokens = (0, big_number_1.bn)(balances.length);
         const ampTimesTotal = math.mul(amplificationParameter, numTokens);
         let sum = balances[0];
         let P_D = math.mul(numTokens, balances[0]);
@@ -24562,36 +26278,40 @@ class StablePool$1 extends base_1$1.default {
         if (params.tokens.length > math$2.MAX_STABLE_TOKENS) {
             throw new Error('MAX_STABLE_TOKENS');
         }
-        this._tokens = common_1$1.shallowCopyAll(params.tokens);
+        this._tokens = (0, common_1$1.shallowCopyAll)(params.tokens);
         if (
-            big_number_1$2.bn(params.amplificationParameter).lt(math$2.MIN_AMP)
+            (0, big_number_1$2.bn)(params.amplificationParameter).lt(
+                math$2.MIN_AMP
+            )
         ) {
             throw new Error('MIN_AMP');
         }
         if (
-            big_number_1$2.bn(params.amplificationParameter).gt(math$2.MAX_AMP)
+            (0, big_number_1$2.bn)(params.amplificationParameter).gt(
+                math$2.MAX_AMP
+            )
         ) {
             throw new Error('MAX_AMP');
         }
-        this._amplificationParameter = big_number_1$2
-            .bn(params.amplificationParameter)
+        this._amplificationParameter = (0, big_number_1$2.bn)(
+            params.amplificationParameter
+        )
             .times(math$2.AMP_PRECISION)
             .toString();
     }
     // ---------------------- Getters ----------------------
     get tokens() {
         // Shallow-copy to disallow direct changes
-        return common_1$1.shallowCopyAll(this._tokens);
+        return (0, common_1$1.shallowCopyAll)(this._tokens);
     }
     get amplificationParameter() {
-        return big_number_1$2
-            .bn(this._amplificationParameter)
+        return (0, big_number_1$2.bn)(this._amplificationParameter)
             .idiv(math$2.AMP_PRECISION)
             .toString();
     }
     // ---------------------- Subgraph initializer ----------------------
     static async initFromRealPool(poolId, query = false, blockNumber, testnet) {
-        const pool = await index_1$1.getPool(poolId, blockNumber, testnet);
+        const pool = await (0, index_1$1.getPool)(poolId, blockNumber, testnet);
         if (!pool) {
             throw new Error('Could not fetch pool data');
         }
@@ -24633,7 +26353,7 @@ class StablePool$1 extends base_1$1.default {
         const tokenIn = this._tokens[tokenIndexIn];
         const tokenOut = this._tokens[tokenIndexOut];
         const scaledAmountOut = math$2._calcOutGivenIn(
-            big_number_1$2.bn(this._amplificationParameter),
+            (0, big_number_1$2.bn)(this._amplificationParameter),
             this._tokens.map((t) => this._upScale(t.balance, t.decimals)),
             tokenIndexIn,
             tokenIndexOut,
@@ -24646,12 +26366,10 @@ class StablePool$1 extends base_1$1.default {
         );
         // In-place balance updates
         if (!this._query) {
-            tokenIn.balance = big_number_1$2
-                .bn(tokenIn.balance)
+            tokenIn.balance = (0, big_number_1$2.bn)(tokenIn.balance)
                 .plus(amountIn)
                 .toString();
-            tokenOut.balance = big_number_1$2
-                .bn(tokenOut.balance)
+            tokenOut.balance = (0, big_number_1$2.bn)(tokenOut.balance)
                 .minus(amountOut)
                 .toString();
         }
@@ -24667,7 +26385,7 @@ class StablePool$1 extends base_1$1.default {
         const tokenIn = this._tokens[tokenIndexIn];
         const tokenOut = this._tokens[tokenIndexOut];
         const scaledAmountIn = math$2._calcInGivenOut(
-            big_number_1$2.bn(this._amplificationParameter),
+            (0, big_number_1$2.bn)(this._amplificationParameter),
             this._tokens.map((t) => this._upScale(t.balance, t.decimals)),
             tokenIndexIn,
             tokenIndexOut,
@@ -24677,12 +26395,10 @@ class StablePool$1 extends base_1$1.default {
         const amountIn = this._downScaleUp(scaledAmountIn, tokenIn.decimals);
         // In-place balance updates
         if (!this._query) {
-            tokenIn.balance = big_number_1$2
-                .bn(tokenIn.balance)
+            tokenIn.balance = (0, big_number_1$2.bn)(tokenIn.balance)
                 .plus(amountIn)
                 .toString();
-            tokenOut.balance = big_number_1$2
-                .bn(tokenOut.balance)
+            tokenOut.balance = (0, big_number_1$2.bn)(tokenOut.balance)
                 .minus(amountOut)
                 .toString();
         }
@@ -24694,7 +26410,7 @@ class StablePool$1 extends base_1$1.default {
             throw new Error('Invalid input');
         }
         const scaledBptOut = math$2._calcBptOutGivenExactTokensIn(
-            big_number_1$2.bn(this._amplificationParameter),
+            (0, big_number_1$2.bn)(this._amplificationParameter),
             this._tokens.map((t) => this._upScale(t.balance, t.decimals)),
             this._tokens.map((t) =>
                 this._upScale(amountsIn[t.symbol], t.decimals)
@@ -24707,13 +26423,11 @@ class StablePool$1 extends base_1$1.default {
         if (!this._query) {
             for (let i = 0; i < this._tokens.length; i++) {
                 const token = this._tokens[i];
-                token.balance = big_number_1$2
-                    .bn(token.balance)
+                token.balance = (0, big_number_1$2.bn)(token.balance)
                     .plus(amountsIn[token.symbol])
                     .toString();
             }
-            this._bptTotalSupply = big_number_1$2
-                .bn(this._bptTotalSupply)
+            this._bptTotalSupply = (0, big_number_1$2.bn)(this._bptTotalSupply)
                 .plus(bptOut)
                 .toString();
         }
@@ -24728,7 +26442,7 @@ class StablePool$1 extends base_1$1.default {
             throw new Error('Invalid input');
         }
         const scaledAmountIn = math$2._calcTokenInGivenExactBptOut(
-            big_number_1$2.bn(this._amplificationParameter),
+            (0, big_number_1$2.bn)(this._amplificationParameter),
             this._tokens.map((t) => this._upScale(t.balance, t.decimals)),
             tokenIndex,
             this._upScale(bptOut, 18),
@@ -24738,12 +26452,10 @@ class StablePool$1 extends base_1$1.default {
         const amountIn = this._downScaleUp(scaledAmountIn, tokenIn.decimals);
         // In-place balance updates
         if (!this._query) {
-            tokenIn.balance = big_number_1$2
-                .bn(tokenIn.balance)
+            tokenIn.balance = (0, big_number_1$2.bn)(tokenIn.balance)
                 .plus(amountIn)
                 .toString();
-            this._bptTotalSupply = big_number_1$2
-                .bn(this._bptTotalSupply)
+            this._bptTotalSupply = (0, big_number_1$2.bn)(this._bptTotalSupply)
                 .plus(bptOut)
                 .toString();
         }
@@ -24758,7 +26470,7 @@ class StablePool$1 extends base_1$1.default {
             throw new Error('Invalid input');
         }
         const scaledAmountOut = math$2._calcTokenOutGivenExactBptIn(
-            big_number_1$2.bn(this._amplificationParameter),
+            (0, big_number_1$2.bn)(this._amplificationParameter),
             this._tokens.map((t) => this._upScale(t.balance, t.decimals)),
             tokenIndex,
             this._upScale(bptIn, 18),
@@ -24771,12 +26483,10 @@ class StablePool$1 extends base_1$1.default {
         );
         // In-place balance updates
         if (!this._query) {
-            tokenOut.balance = big_number_1$2
-                .bn(tokenOut.balance)
+            tokenOut.balance = (0, big_number_1$2.bn)(tokenOut.balance)
                 .minus(amountOut)
                 .toString();
-            this._bptTotalSupply = big_number_1$2
-                .bn(this._bptTotalSupply)
+            this._bptTotalSupply = (0, big_number_1$2.bn)(this._bptTotalSupply)
                 .minus(bptIn)
                 .toString();
         }
@@ -24784,7 +26494,7 @@ class StablePool$1 extends base_1$1.default {
     }
     exitExactBptInForTokensOut(bptIn) {
         // Exactly match the EVM version
-        if (big_number_1$2.bn(bptIn).gt(this._bptTotalSupply)) {
+        if ((0, big_number_1$2.bn)(bptIn).gt(this._bptTotalSupply)) {
             throw new Error('BPT in exceeds total supply');
         }
         const scaledAmountsOut = math$2._calcTokensOutGivenExactBptIn(
@@ -24799,13 +26509,11 @@ class StablePool$1 extends base_1$1.default {
         if (!this._query) {
             for (let i = 0; i < this._tokens.length; i++) {
                 const token = this._tokens[i];
-                token.balance = big_number_1$2
-                    .bn(token.balance)
+                token.balance = (0, big_number_1$2.bn)(token.balance)
                     .minus(amountsOut[i])
                     .toString();
             }
-            this._bptTotalSupply = big_number_1$2
-                .bn(this._bptTotalSupply)
+            this._bptTotalSupply = (0, big_number_1$2.bn)(this._bptTotalSupply)
                 .minus(bptIn)
                 .toString();
         }
@@ -24816,7 +26524,7 @@ class StablePool$1 extends base_1$1.default {
             throw new Error('Invalid input');
         }
         const scaledBptIn = math$2._calcBptInGivenExactTokensOut(
-            big_number_1$2.bn(this._amplificationParameter),
+            (0, big_number_1$2.bn)(this._amplificationParameter),
             this._tokens.map((t) => this._upScale(t.balance, t.decimals)),
             this._tokens.map((t) =>
                 this._upScale(amountsOut[t.symbol], t.decimals)
@@ -24829,13 +26537,11 @@ class StablePool$1 extends base_1$1.default {
         if (!this._query) {
             for (let i = 0; i < this._tokens.length; i++) {
                 const token = this._tokens[i];
-                token.balance = big_number_1$2
-                    .bn(token.balance)
+                token.balance = (0, big_number_1$2.bn)(token.balance)
                     .minus(amountsOut[token.symbol])
                     .toString();
             }
-            this._bptTotalSupply = big_number_1$2
-                .bn(this._bptTotalSupply)
+            this._bptTotalSupply = (0, big_number_1$2.bn)(this._bptTotalSupply)
                 .minus(bptIn)
                 .toString();
         }
@@ -24866,12 +26572,12 @@ math$1._calcBptInGivenExactTokenOut =
 const big_number_1$1 = bigNumber;
 const fp = fixedPoint;
 // Swap limits: amounts swapped may not be larger than this percentage of total balance
-const MAX_IN_RATIO = big_number_1$1.bn('300000000000000000'); // 0.3e18
-const MAX_OUT_RATIO = big_number_1$1.bn('300000000000000000'); // 0.3e18
+const MAX_IN_RATIO = (0, big_number_1$1.bn)('300000000000000000'); // 0.3e18
+const MAX_OUT_RATIO = (0, big_number_1$1.bn)('300000000000000000'); // 0.3e18
 // Invariant growth limit: non-proportional joins cannot cause the invariant to increase by more than this ratio
-const MAX_INVARIANT_RATIO = big_number_1$1.bn('3000000000000000000'); // 3e18
+const MAX_INVARIANT_RATIO = (0, big_number_1$1.bn)('3000000000000000000'); // 3e18
 // Invariant shrink limit: non-proportional exits cannot cause the invariant to decrease by less than this ratio
-const MIN_INVARIANT_RATIO = big_number_1$1.bn('700000000000000000'); // 0.7e18
+const MIN_INVARIANT_RATIO = (0, big_number_1$1.bn)('700000000000000000'); // 0.7e18
 const _calculateInvariant = (normalizedWeights, balances) => {
     /*****************************************************************************************
     // invariant               _____                                                        //
@@ -25317,17 +27023,21 @@ class WeightedPool$1 extends base_1.default {
         this.MAX_TOKENS = 8;
         // A minimum normalized weight imposes a maximum weight ratio
         // We need this due to limitations in the implementation of the power function, as these ratios are often exponents
-        this.MIN_WEIGHT = big_number_1.bn('0.01'); // 0.01e18
+        this.MIN_WEIGHT = (0, big_number_1.bn)('0.01'); // 0.01e18
         if (params.tokens.length < this.MIN_TOKENS) {
             throw new Error('MIN_TOKENS');
         }
         if (params.tokens.length > this.MAX_TOKENS) {
             throw new Error('MAX_TOKENS');
         }
-        this._tokens = common_1.shallowCopyAll(params.tokens);
-        let normalizedSum = big_number_1.bn(0);
+        this._tokens = (0, common_1.shallowCopyAll)(params.tokens);
+        let normalizedSum = (0, big_number_1.bn)(0);
         for (let i = 0; i < params.tokens.length; i++) {
-            if (big_number_1.bn(params.tokens[i].weight).lt(this.MIN_WEIGHT)) {
+            if (
+                (0, big_number_1.bn)(params.tokens[i].weight).lt(
+                    this.MIN_WEIGHT
+                )
+            ) {
                 throw new Error('MIN_WEIGHT');
             }
             normalizedSum = normalizedSum.plus(params.tokens[i].weight);
@@ -25339,11 +27049,11 @@ class WeightedPool$1 extends base_1.default {
     // ---------------------- Getters ----------------------
     get tokens() {
         // Shallow-copy to disallow direct changes
-        return common_1.shallowCopyAll(this._tokens);
+        return (0, common_1.shallowCopyAll)(this._tokens);
     }
     // ---------------------- Subgraph initializer ----------------------
     static async initFromRealPool(poolId, query = false, blockNumber, testnet) {
-        const pool = await index_1.getPool(poolId, blockNumber, testnet);
+        const pool = await (0, index_1.getPool)(poolId, blockNumber, testnet);
         if (!pool) {
             throw new Error('Could not fetch pool data');
         }
@@ -25399,12 +27109,10 @@ class WeightedPool$1 extends base_1.default {
         );
         // In-place balance updates
         if (!this._query) {
-            tokenIn.balance = big_number_1
-                .bn(tokenIn.balance)
+            tokenIn.balance = (0, big_number_1.bn)(tokenIn.balance)
                 .plus(amountIn)
                 .toString();
-            tokenOut.balance = big_number_1
-                .bn(tokenOut.balance)
+            tokenOut.balance = (0, big_number_1.bn)(tokenOut.balance)
                 .minus(amountOut)
                 .toString();
         }
@@ -25424,12 +27132,10 @@ class WeightedPool$1 extends base_1.default {
         const amountIn = this._downScaleUp(scaledAmountIn, tokenIn.decimals);
         // In-place balance updates
         if (!this._query) {
-            tokenIn.balance = big_number_1
-                .bn(tokenIn.balance)
+            tokenIn.balance = (0, big_number_1.bn)(tokenIn.balance)
                 .plus(amountIn)
                 .toString();
-            tokenOut.balance = big_number_1
-                .bn(tokenOut.balance)
+            tokenOut.balance = (0, big_number_1.bn)(tokenOut.balance)
                 .minus(amountOut)
                 .toString();
         }
@@ -25454,13 +27160,11 @@ class WeightedPool$1 extends base_1.default {
         if (!this._query) {
             for (let i = 0; i < this._tokens.length; i++) {
                 const token = this._tokens[i];
-                token.balance = big_number_1
-                    .bn(token.balance)
+                token.balance = (0, big_number_1.bn)(token.balance)
                     .plus(amountsIn[token.symbol])
                     .toString();
             }
-            this._bptTotalSupply = big_number_1
-                .bn(this._bptTotalSupply)
+            this._bptTotalSupply = (0, big_number_1.bn)(this._bptTotalSupply)
                 .plus(bptOut)
                 .toString();
         }
@@ -25481,12 +27185,10 @@ class WeightedPool$1 extends base_1.default {
         const amountIn = this._downScaleUp(scaledAmountIn, tokenIn.decimals);
         // In-place balance updates
         if (!this._query) {
-            tokenIn.balance = big_number_1
-                .bn(tokenIn.balance)
+            tokenIn.balance = (0, big_number_1.bn)(tokenIn.balance)
                 .plus(amountIn)
                 .toString();
-            this._bptTotalSupply = big_number_1
-                .bn(this._bptTotalSupply)
+            this._bptTotalSupply = (0, big_number_1.bn)(this._bptTotalSupply)
                 .plus(bptOut)
                 .toString();
         }
@@ -25510,12 +27212,10 @@ class WeightedPool$1 extends base_1.default {
         );
         // In-place balance updates
         if (!this._query) {
-            tokenOut.balance = big_number_1
-                .bn(tokenOut.balance)
+            tokenOut.balance = (0, big_number_1.bn)(tokenOut.balance)
                 .minus(amountOut)
                 .toString();
-            this._bptTotalSupply = big_number_1
-                .bn(this._bptTotalSupply)
+            this._bptTotalSupply = (0, big_number_1.bn)(this._bptTotalSupply)
                 .minus(bptIn)
                 .toString();
         }
@@ -25523,7 +27223,7 @@ class WeightedPool$1 extends base_1.default {
     }
     exitExactBptInForTokensOut(bptIn) {
         // Exactly match the EVM version
-        if (big_number_1.bn(bptIn).gt(this._bptTotalSupply)) {
+        if ((0, big_number_1.bn)(bptIn).gt(this._bptTotalSupply)) {
             throw new Error('BPT in exceeds total supply');
         }
         const scaledAmountsOut = math._calcTokensOutGivenExactBptIn(
@@ -25538,13 +27238,11 @@ class WeightedPool$1 extends base_1.default {
         if (!this._query) {
             for (let i = 0; i < this._tokens.length; i++) {
                 const token = this._tokens[i];
-                token.balance = big_number_1
-                    .bn(token.balance)
+                token.balance = (0, big_number_1.bn)(token.balance)
                     .minus(amountsOut[i])
                     .toString();
             }
-            this._bptTotalSupply = big_number_1
-                .bn(this._bptTotalSupply)
+            this._bptTotalSupply = (0, big_number_1.bn)(this._bptTotalSupply)
                 .minus(bptIn)
                 .toString();
         }
@@ -25568,13 +27266,11 @@ class WeightedPool$1 extends base_1.default {
         if (!this._query) {
             for (let i = 0; i < this._tokens.length; i++) {
                 const token = this._tokens[i];
-                token.balance = big_number_1
-                    .bn(token.balance)
+                token.balance = (0, big_number_1.bn)(token.balance)
                     .minus(amountsOut[token.symbol])
                     .toString();
             }
-            this._bptTotalSupply = big_number_1
-                .bn(this._bptTotalSupply)
+            this._bptTotalSupply = (0, big_number_1.bn)(this._bptTotalSupply)
                 .minus(bptIn)
                 .toString();
         }
@@ -25590,7 +27286,13 @@ var WeightedMath_1 =
     StableMath_1 =
     src.StableMath =
     src.StablePool =
+    src.LinearMath =
+    src.LinearPool =
         void 0);
+const linear_1 = linear;
+src.LinearPool = linear_1.default;
+const LinearMath = math$6;
+src.LinearMath = LinearMath;
 const stable_1 = stable;
 src.StablePool = stable_1.default;
 const StableMath = math$3;
@@ -35378,7 +37080,7 @@ function fetchSubgraphPools(subgraphUrl) {
       {
         pools: pools(
           first: 1000,
-          where: { swapEnabled: true, id_not_in: ["0xae1c69eae0f1342425ea3fdb51e9f11223c7ad5b00010000000000000000000b", "0x5018fa8aa910fa2eea07529d80e7a44b2e2d29cf000100000000000000000022", "0xe2fd25b84aa76486e0cbc2c2ca383c3587abb942000100000000000000000028", "0x51c5875ee17f1af4ddca0ce0df8dcad0b115b191000100000000000000000012"] },
+          where: { swapEnabled: true, id_not_in: ["0xae1c69eae0f1342425ea3fdb51e9f11223c7ad5b00010000000000000000000b", "0x5018fa8aa910fa2eea07529d80e7a44b2e2d29cf000100000000000000000022", "0xe2fd25b84aa76486e0cbc2c2ca383c3587abb942000100000000000000000028", "0x51c5875ee17f1af4ddca0ce0df8dcad0b115b191000100000000000000000012", "0xf61cb5126247dbadd1197651152a46f9b32678c40001000000000000000000d7"] },
           orderBy: totalLiquidity,
           orderDirection: desc
         ) {
