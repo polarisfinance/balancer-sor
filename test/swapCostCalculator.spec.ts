@@ -58,7 +58,12 @@ describe('Test SwapCostCalculator', () => {
             const cost = await new SwapCostCalculator(
                 1,
                 SUBGRAPH_URL
-            ).convertGasCostToToken(DAI, 18, gasPriceWei, swapGas);
+            ).convertGasCostToToken(
+                DAI.address,
+                DAI.decimals,
+                gasPriceWei,
+                swapGas
+            );
             const costEth = formatFixed(cost, 18);
             console.log(`CostOutputToken DAI: ${costEth.toString()}`);
         }).timeout(5000);
@@ -70,7 +75,12 @@ describe('Test SwapCostCalculator', () => {
             const cost = await new SwapCostCalculator(
                 1,
                 SUBGRAPH_URL
-            ).convertGasCostToToken(USDC, 6, gasPriceWei, swapGas);
+            ).convertGasCostToToken(
+                USDC.address,
+                USDC.decimals,
+                gasPriceWei,
+                swapGas
+            );
             const costEth = formatFixed(cost, 6);
             console.log(`CostOutputToken USDC: ${costEth.toString()}`);
         }).timeout(5000);
@@ -82,7 +92,12 @@ describe('Test SwapCostCalculator', () => {
             const cost = await new SwapCostCalculator(
                 1,
                 SUBGRAPH_URL
-            ).convertGasCostToToken(MKR, 18, gasPriceWei, swapGas);
+            ).convertGasCostToToken(
+                MKR.address,
+                MKR.decimals,
+                gasPriceWei,
+                swapGas
+            );
             const costEth = formatFixed(cost, 18);
             console.log(`CostOutputToken MKR: ${costEth.toString()}`);
         }).timeout(5000);
@@ -94,7 +109,12 @@ describe('Test SwapCostCalculator', () => {
             const cost = await new SwapCostCalculator(
                 1,
                 SUBGRAPH_URL
-            ).convertGasCostToToken(WETH, 18, gasPriceWei, swapGas);
+            ).convertGasCostToToken(
+                WETH.address,
+                WETH.decimals,
+                gasPriceWei,
+                swapGas
+            );
             const costEth = formatFixed(cost, 18);
             console.log(`CostOutputToken WETH: ${costEth.toString()}`);
         }).timeout(5000);

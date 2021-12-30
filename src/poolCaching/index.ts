@@ -1,4 +1,4 @@
-import { BaseProvider } from '@ethersproject/providers';
+import { Provider } from '@ethersproject/providers';
 import cloneDeep from 'lodash.clonedeep';
 import { MULTIADDR, VAULTADDR } from '../constants';
 import { SubgraphPoolBase } from '../types';
@@ -10,7 +10,7 @@ export class PoolCacher {
     finishedFetchingOnChain = false;
 
     constructor(
-        private provider: BaseProvider,
+        private provider: Provider,
         private chainId: number,
         private poolsUrl: string | null = null,
         initialPools: SubgraphPoolBase[] = []
@@ -46,7 +46,10 @@ export class PoolCacher {
             } else {
                 // Retrieve from URL if set otherwise use data passed in constructor
                 if (this.poolsUrl !== null) {
-                    newPools = await fetchSubgraphPools(this.poolsUrl);
+                    newPools = await fetchSubgraphPools(
+                        this.poolsUrl,
+                        this.chainId
+                    );
                 } else {
                     newPools = this.pools;
                 }

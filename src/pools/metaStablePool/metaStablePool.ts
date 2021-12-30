@@ -95,22 +95,26 @@ export class MetaStablePool implements PoolBase {
         );
         if (tokenIndexIn < 0) throw 'Pool does not contain tokenIn';
         const tI = this.tokens[tokenIndexIn];
-        // balanceIn = tI.balance;
-        const balanceIn = bnum(tI.balance).times(bnum(tI.priceRate)).toString();
+
         const decimalsIn = tI.decimals;
         const tokenInPriceRate = parseFixed(tI.priceRate, 18);
+        const balanceIn = formatFixed(
+            parseFixed(tI.balance, decimalsIn).mul(tokenInPriceRate).div(ONE),
+            decimalsIn
+        );
 
         const tokenIndexOut = this.tokens.findIndex(
             (t) => getAddress(t.address) === getAddress(tokenOut)
         );
         if (tokenIndexOut < 0) throw 'Pool does not contain tokenOut';
         const tO = this.tokens[tokenIndexOut];
-        // balanceOut = tO.balance;
-        const balanceOut = bnum(tO.balance)
-            .times(bnum(tO.priceRate))
-            .toString();
+
         const decimalsOut = tO.decimals;
         const tokenOutPriceRate = parseFixed(tO.priceRate, 18);
+        const balanceOut = formatFixed(
+            parseFixed(tO.balance, decimalsOut).mul(tokenOutPriceRate).div(ONE),
+            decimalsOut
+        );
 
         // Get all token balances
         const allBalances = this.tokens.map(({ balance, priceRate }) =>
@@ -277,6 +281,8 @@ export class MetaStablePool implements PoolBase {
         poolPairData: MetaStablePoolPairData,
         amount: OldBigNumber
     ): OldBigNumber {
+        const priceRateIn = formatFixed(poolPairData.tokenInPriceRate, 18);
+        const priceRateOut = formatFixed(poolPairData.tokenOutPriceRate, 18);
         const amountConverted = amount.times(
             formatFixed(poolPairData.tokenInPriceRate, 18)
         );
@@ -284,13 +290,15 @@ export class MetaStablePool implements PoolBase {
             amountConverted,
             poolPairData
         );
-        return result;
+        return result.div(priceRateIn).times(priceRateOut);
     }
 
     _spotPriceAfterSwapTokenInForExactTokenOut(
         poolPairData: MetaStablePoolPairData,
         amount: OldBigNumber
     ): OldBigNumber {
+        const priceRateIn = formatFixed(poolPairData.tokenInPriceRate, 18);
+        const priceRateOut = formatFixed(poolPairData.tokenOutPriceRate, 18);
         const amountConverted = amount.times(
             formatFixed(poolPairData.tokenOutPriceRate, 18)
         );
@@ -298,26 +306,32 @@ export class MetaStablePool implements PoolBase {
             amountConverted,
             poolPairData
         );
-        return result;
+        return result.div(priceRateIn).times(priceRateOut);
     }
 
     _derivativeSpotPriceAfterSwapExactTokenInForTokenOut(
         poolPairData: MetaStablePoolPairData,
         amount: OldBigNumber
     ): OldBigNumber {
+        const priceRateOut = formatFixed(poolPairData.tokenOutPriceRate, 18);
         return _derivativeSpotPriceAfterSwapExactTokenInForTokenOut(
             amount,
             poolPairData
-        );
+        ).times(priceRateOut);
     }
 
     _derivativeSpotPriceAfterSwapTokenInForExactTokenOut(
         poolPairData: MetaStablePoolPairData,
         amount: OldBigNumber
     ): OldBigNumber {
+        const priceRateIn = formatFixed(poolPairData.tokenInPriceRate, 18);
+        const priceRateOut = formatFixed(poolPairData.tokenOutPriceRate, 18);
         return _derivativeSpotPriceAfterSwapTokenInForExactTokenOut(
             amount,
             poolPairData
-        );
+        )
+            .div(priceRateIn)
+            .times(priceRateOut)
+            .times(priceRateOut);
     }
 }
