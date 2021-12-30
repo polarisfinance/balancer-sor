@@ -215,12 +215,12 @@ export function filterHopPools(
             for (const poolId of secondOptions) {
                 filteredPoolsOfInterest[poolId] = poolsOfInterest[poolId];
 
-                const path = createMultihopPath(
-                    poolsOfInterest[highestNormalizedLiquidityFirstPoolId],
-                    poolsOfInterest[poolId],
-                    tokenIn,
-                    hopTokens[i],
-                    tokenOut
+                const path = createPath(
+                    [tokenIn, hopTokens[i], tokenOut],
+                    [
+                        poolsOfInterest[highestNormalizedLiquidityFirstPoolId],
+                        poolsOfInterest[poolId],
+                    ]
                 );
 
                 paths.push(path);
