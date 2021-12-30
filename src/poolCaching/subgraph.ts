@@ -3,12 +3,7 @@ import { SubgraphPoolBase } from '../types';
 
 const queryWithLinear = `
       {
-        pools: pools(
-          first: 1000,
-          where: { swapEnabled: true },
-          orderBy: totalLiquidity,
-          orderDirection: desc
-        ) {
+        pools: {
           id
           address
           poolType
