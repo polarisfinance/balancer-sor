@@ -18600,7 +18600,7 @@ function getOnChainBalances(
 
 const queryWithLinear = `
       {
-        pools: {
+        pools {
           id
           address
           poolType

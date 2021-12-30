@@ -3,7 +3,7 @@ import { SubgraphPoolBase } from '../types';
 
 const queryWithLinear = `
       {
-        pools: {
+        pools {
           id
           address
           poolType
