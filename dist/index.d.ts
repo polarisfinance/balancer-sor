@@ -1,6 +1,7 @@
 import { BigNumber, BigNumberish } from '@ethersproject/bignumber';
-import { BaseProvider } from '@ethersproject/providers';
+import { Provider } from '@ethersproject/providers';
 import { BigNumber as BigNumber$1 } from 'bignumber.js';
+import { Contract } from '@ethersproject/contracts';
 
 declare type NoNullableField<T> = {
     [P in keyof T]: NonNullable<T[P]>;
@@ -14,6 +15,7 @@ declare enum PoolTypes {
     Stable = 1,
     Element = 2,
     MetaStable = 3,
+    Linear = 4,
 }
 declare enum SwapPairType {
     Direct = 0,
@@ -65,6 +67,10 @@ interface SubgraphPoolBase {
     unitSeconds?: number;
     principalToken?: string;
     baseToken?: string;
+    mainIndex?: number;
+    wrappedIndex?: number;
+    lowerTarget?: string;
+    upperTarget?: string;
 }
 declare type SubgraphToken = {
     address: string;
@@ -118,6 +124,10 @@ declare enum PoolFilter {
     Stable = 'Stable',
     MetaStable = 'MetaStable',
     LBP = 'LiquidityBootstrapping',
+    Investment = 'Investment',
+    Element = 'Element',
+    AaveLinear = 'AaveLinear',
+    StablePhantom = 'StablePhantom',
 }
 interface PoolBase {
     poolType: PoolTypes;
@@ -125,6 +135,7 @@ interface PoolBase {
     id: string;
     address: string;
     tokensList: string[];
+    mainIndex?: number;
     setTypeForSwap: (type: SwapPairType) => void;
     parsePoolPairData: (tokenIn: string, tokenOut: string) => PoolPairBase;
     getNormalizedLiquidity: (poolPairData: PoolPairBase) => BigNumber$1;
@@ -171,7 +182,7 @@ declare class PoolCacher {
     private pools;
     finishedFetchingOnChain: boolean;
     constructor(
-        provider: BaseProvider,
+        provider: Provider,
         chainId: number,
         poolsUrl?: string | null,
         initialPools?: SubgraphPoolBase[]
@@ -219,23 +230,43 @@ declare class SwapCostCalculator {
 }
 
 declare class SOR {
-    provider: BaseProvider;
+    provider: Provider;
     chainId: number;
     poolCacher: PoolCacher;
     private routeProposer;
     swapCostCalculator: SwapCostCalculator;
     private readonly defaultSwapOptions;
+    /**
+     * @param {Provider} provider - Provider.
+     * @param {number} chainId - Id of chain.
+     * @param {string | null} poolsSource - Pass Subgraph URL used to retrieve pools or null to use initialPools.
+     * @param {SubgraphPoolBase[]} initialPools - Can be set with initial pools to use.
+     */
     constructor(
-        provider: BaseProvider,
+        provider: Provider,
         chainId: number,
         subgraphUrl: string | null,
         initialPools?: SubgraphPoolBase[]
     );
     getPools(): SubgraphPoolBase[];
+    /**
+     * fetchPools Retrieves pools information and saves to internal pools cache.
+     * @param {SubgraphPoolBase[]} poolsData - If empty pools will be fetched from source in constructor. If pools passed they will be used as pools source.
+     * @param {boolean} isOnChain - If isOnChain is true will retrieve all required onChain data. (false is advised to only be used for testing)
+     * @returns {boolean} True if pools fetched successfully, False if not.
+     */
     fetchPools(
         poolsData?: SubgraphPoolBase[],
         isOnChain?: boolean
     ): Promise<boolean>;
+    /**
+     * getSwaps Retrieve information for best swap tokenIn>tokenOut.
+     * @param {string} tokenIn - Address of tokenIn.
+     * @param {string} tokenOut - Address of tokenOut.
+     * @param {SwapTypes} swapType - SwapExactIn where the amount of tokens in (sent to the Pool) is known or SwapExactOut where the amount of tokens out (received from the Pool) is known.
+     * @param {BigNumberish} swapAmount - Either amountIn or amountOut depending on the `swapType` value.
+     * @returns {SwapInfo} Swap information including return amount and swaps structure to be submitted to Vault.
+     */
     getSwaps(
         tokenIn: string,
         tokenOut: string,
@@ -243,6 +274,14 @@ declare class SOR {
         swapAmount: BigNumberish,
         swapOptions?: Partial<SwapOptions>
     ): Promise<SwapInfo>;
+    /**
+     * getCostOfSwapInToken Calculates and saves price of a swap in outputToken denomination. Used to determine if extra swaps are cost effective.
+     * @param {string} outputToken - Address of outputToken.
+     * @param {number} outputTokenDecimals - Decimals of outputToken.
+     * @param {BigNumber} gasPrice - Gas price used to calculate cost.
+     * @param {BigNumber} swapGas - Gas cost of a swap. Default=35000.
+     * @returns {BigNumber} Price of a swap in outputToken denomination.
+     */
     getCostOfSwapInToken(
         outputToken: string,
         outputTokenDecimals: number,
@@ -256,7 +295,7 @@ declare class SOR {
     private getBestPaths;
 }
 
-declare function BPTForTokensZeroPriceImpact$1(
+declare function BPTForTokensZeroPriceImpact$2(
     balances: BigNumberish[],
     decimals: number[],
     normalizedWeights: BigNumberish[],
@@ -264,13 +303,51 @@ declare function BPTForTokensZeroPriceImpact$1(
     bptTotalSupply: BigNumberish
 ): BigNumber;
 
-declare function BPTForTokensZeroPriceImpact(
+declare function BPTForTokensZeroPriceImpact$1(
     allBalances: BigNumberish[],
     decimals: number[],
     amounts: BigNumberish[], // This has to have the same lenght as allBalances
     bptTotalSupply: BigNumberish,
     amp: BigNumberish
 ): BigNumber;
+
+declare function BPTForTokensZeroPriceImpact(
+    allBalances: BigNumberish[], // assuming that BPT balance was removed
+    decimals: number[], // This should be [18, 18, 18]
+    amounts: BigNumberish[], // This has to have the same length as allBalances
+    virtualBptSupply: BigNumberish,
+    amp: BigNumberish,
+    fee: BigNumberish,
+    rates: BigNumberish[]
+): BigNumber;
+
+declare function queryBatchSwapTokensIn(
+    sor: SOR,
+    vaultContract: Contract,
+    tokensIn: string[],
+    amountsIn: BigNumberish[],
+    tokenOut: string
+): Promise<{
+    amountTokenOut: string;
+    swaps: SwapV2[];
+    assets: string[];
+}>;
+declare function queryBatchSwapTokensOut(
+    sor: SOR,
+    vaultContract: Contract,
+    tokenIn: string,
+    amountsIn: BigNumberish[],
+    tokensOut: string[]
+): Promise<{
+    amountTokensOut: string[];
+    swaps: SwapV2[];
+    assets: string[];
+}>;
+
+declare function parseToPoolsDict(
+    pools: SubgraphPoolBase[],
+    timestamp: number
+): PoolDictionary;
 
 export {
     NewPath,
@@ -292,6 +369,10 @@ export {
     SwapTypes,
     SwapV2,
     WeightedPool,
-    BPTForTokensZeroPriceImpact as stableBPTForTokensZeroPriceImpact,
-    BPTForTokensZeroPriceImpact$1 as weightedBPTForTokensZeroPriceImpact,
+    parseToPoolsDict,
+    BPTForTokensZeroPriceImpact as phantomStableBPTForTokensZeroPriceImpact,
+    queryBatchSwapTokensIn,
+    queryBatchSwapTokensOut,
+    BPTForTokensZeroPriceImpact$1 as stableBPTForTokensZeroPriceImpact,
+    BPTForTokensZeroPriceImpact$2 as weightedBPTForTokensZeroPriceImpact,
 };
