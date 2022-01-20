@@ -38,25 +38,15 @@ export class PoolCacher {
         isOnChain = true
     ): Promise<boolean> {
         try {
-            let newPools: SubgraphPoolBase[];
-
-            // If poolsData has been passed to function these pools should be used
-            if (poolsData.length > 0) {
-                newPools = cloneDeep(poolsData);
-            } else {
-                // Retrieve from URL if set otherwise use data passed in constructor
-                if (this.poolsUrl !== null) {
-                    newPools = await fetchSubgraphPools(
-                        this.poolsUrl,
-                        this.chainId
-                    );
-                } else {
-                    newPools = this.pools;
-                }
+            if (this.poolsUrl !== null) {
+                this.pools = await fetchSubgraphPools(
+                    this.poolsUrl,
+                    this.chainId
+                );
             }
 
             // Get latest on-chain balances (returns data in string/normalized format)
-            this.pools = await this.fetchOnChainBalances(newPools, isOnChain);
+            //this.pools = await this.fetchOnChainBalances(newPools, isOnChain);
 
             this.finishedFetchingOnChain = true;
 

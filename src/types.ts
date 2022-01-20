@@ -149,6 +149,7 @@ export enum PoolFilter {
     Investment = 'Investment',
     Element = 'Element',
     AaveLinear = 'AaveLinear',
+    Linear = 'Linear',
     StablePhantom = 'StablePhantom',
 }
 
