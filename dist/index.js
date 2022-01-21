@@ -5002,6 +5002,7 @@ exports.PoolFilter = void 0;
     PoolFilter['Investment'] = 'Investment';
     PoolFilter['Element'] = 'Element';
     PoolFilter['AaveLinear'] = 'AaveLinear';
+    PoolFilter['Linear'] = 'Linear';
     PoolFilter['StablePhantom'] = 'StablePhantom';
 })(exports.PoolFilter || (exports.PoolFilter = {}));
 
@@ -7634,6 +7635,7 @@ class LinearPool {
             wrappedBalanceScaled,
             bptBalanceScaled,
             virtualBptSupply,
+            balanceOutScaled: bignumber.parseFixed(tO.balance, 18),
         };
         return poolPairData;
     }
@@ -7677,7 +7679,7 @@ class LinearPool {
             ) {
                 // Limit is amount of BPT in for pool balance of tokenOut
                 const limit = _calcBptInPerWrappedOut(
-                    bnum(poolPairData.balanceOut.toString()),
+                    bnum(linearPoolPairData.balanceOutScaled.toString()),
                     bnum(linearPoolPairData.mainBalanceScaled.toString()),
                     bnum(linearPoolPairData.wrappedBalanceScaled.toString()),
                     bnum(linearPoolPairData.bptBalanceScaled.toString()),
@@ -18853,26 +18855,14 @@ class PoolCacher {
     fetchPools(poolsData = [], isOnChain = true) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                let newPools;
-                // If poolsData has been passed to function these pools should be used
-                if (poolsData.length > 0) {
-                    newPools = cloneDeep(poolsData);
-                } else {
-                    // Retrieve from URL if set otherwise use data passed in constructor
-                    if (this.poolsUrl !== null) {
-                        newPools = yield fetchSubgraphPools(
-                            this.poolsUrl,
-                            this.chainId
-                        );
-                    } else {
-                        newPools = this.pools;
-                    }
+                if (this.poolsUrl !== null) {
+                    this.pools = yield fetchSubgraphPools(
+                        this.poolsUrl,
+                        this.chainId
+                    );
                 }
                 // Get latest on-chain balances (returns data in string/normalized format)
-                this.pools = yield this.fetchOnChainBalances(
-                    newPools,
-                    isOnChain
-                );
+                //this.pools = await this.fetchOnChainBalances(newPools, isOnChain);
                 this.finishedFetchingOnChain = true;
                 return true;
             } catch (err) {
