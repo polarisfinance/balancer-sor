@@ -70,6 +70,7 @@ export type LinearPoolPairData = PoolPairBase & {
     wrappedBalanceScaled: BigNumber;
     bptBalanceScaled: BigNumber;
     virtualBptSupply: BigNumber;
+    balanceOutScaled: BigNumber;
 };
 
 export class LinearPool implements PoolBase {
@@ -213,6 +214,7 @@ export class LinearPool implements PoolBase {
             wrappedBalanceScaled,
             bptBalanceScaled,
             virtualBptSupply,
+            balanceOutScaled: parseFixed(tO.balance, 18),
         };
 
         return poolPairData;
@@ -264,7 +266,7 @@ export class LinearPool implements PoolBase {
             ) {
                 // Limit is amount of BPT in for pool balance of tokenOut
                 const limit = _calcBptInPerWrappedOut(
-                    bnum(poolPairData.balanceOut.toString()),
+                    bnum(linearPoolPairData.balanceOutScaled.toString()),
                     bnum(linearPoolPairData.mainBalanceScaled.toString()),
                     bnum(linearPoolPairData.wrappedBalanceScaled.toString()),
                     bnum(linearPoolPairData.bptBalanceScaled.toString()),
