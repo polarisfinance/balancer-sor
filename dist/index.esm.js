@@ -18664,6 +18664,7 @@ const Query = {
     42: queryWithLinear,
     137: queryWithOutLinear,
     42161: queryWithLinear,
+    250: queryWithOutLinear,
 };
 // Returns all public pools
 function fetchSubgraphPools(subgraphUrl, chainId = 1) {
