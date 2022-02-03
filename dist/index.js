@@ -12412,6 +12412,10 @@ const STABAL3POOL = {
         id: 'staBal3Id',
         address: '0x06df3b2bbb68adc8b0e302443692037ed9f91b42',
     },
+    250: {
+        id: '0x5ddb92a5340fd0ead3987d3661afcd6104c3b757000000000000000000000187',
+        address: '0x5ddb92a5340fd0ead3987d3661afcd6104c3b757',
+    },
 };
 const WETHSTABAL3 = {
     42: {
