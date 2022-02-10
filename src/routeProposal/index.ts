@@ -1,18 +1,16 @@
-import {
-    filterPoolsOfInterest,
-    filterHopPools,
-    getLinearStaBal3Paths,
-    getPathsUsingStaBalPool,
-    parseToPoolsDict,
-} from './filtering';
+import { createPath, parseToPoolsDict } from './filtering';
 import { calculatePathLimits } from './pathLimits';
 import {
+    NewPath,
+    PoolPairBase,
+    SorConfig,
+    SubgraphPoolBase,
+    Swap,
     SwapOptions,
     SwapTypes,
-    NewPath,
-    SubgraphPoolBase,
-    SorConfig,
 } from '../types';
+import { mapKeys } from 'lodash';
+import { createGraph, findPaths, PathSegment, sortPaths } from '../graph/graph';
 
 export class RouteProposer {
     cache: Record<string, { paths: NewPath[] }> = {};
@@ -44,8 +42,54 @@ export class RouteProposer {
         }
 
         const poolsAllDict = parseToPoolsDict(pools, swapOptions.timestamp);
+        const poolsAllAddressDict = mapKeys(
+            poolsAllDict,
+            (pool) => pool.address
+        );
 
-        const [poolsFilteredDict, hopTokens] = filterPoolsOfInterest(
+        const graph = createGraph(poolsAllAddressDict);
+        let graphPaths: PathSegment[][] = [];
+        const isRelayerRoute = !!(
+            poolsAllAddressDict[tokenIn] || poolsAllAddressDict[tokenOut]
+        );
+
+        findPaths(
+            graph,
+            poolsAllAddressDict,
+            tokenIn,
+            tokenOut,
+            [tokenIn],
+            1,
+            2,
+            isRelayerRoute,
+            (foundPaths) => {
+                graphPaths = [...graphPaths, ...foundPaths];
+            }
+        );
+
+        const sortedPaths = sortPaths(graphPaths);
+
+        const pathCache: {
+            [key: string]: { swaps: Swap[]; pairData: PoolPairBase[] };
+        } = {};
+
+        const paths = sortedPaths.map((path) => {
+            const tokens = [
+                path[0].tokenIn,
+                ...path.map((segment) => segment.tokenOut),
+            ];
+
+            return createPath(
+                tokens,
+                path.map((segment) => poolsAllDict[segment.poolId]),
+                poolsAllAddressDict,
+                pathCache
+            );
+        });
+
+        //console.log('paths', paths[0]);
+
+        /*const [poolsFilteredDict, hopTokens] = filterPoolsOfInterest(
             poolsAllDict,
             tokenIn,
             tokenOut,
@@ -56,7 +100,8 @@ export class RouteProposer {
             tokenIn,
             tokenOut,
             hopTokens,
-            poolsFilteredDict
+            poolsFilteredDict,
+            poolsAllDict
         );
 
         const pathsUsingLinear: NewPath[] = getLinearStaBal3Paths(
@@ -77,14 +122,13 @@ export class RouteProposer {
 
         const combinedPathData = pathData
             .concat(...pathsUsingLinear)
-            .concat(...pathsUsingStaBal);
-        const [paths] = calculatePathLimits(combinedPathData, swapType);
+            .concat(...pathsUsingStaBal);*/
+
+        const [pathsWithLimits] = calculatePathLimits(paths, swapType);
 
         this.cache[`${tokenIn}${tokenOut}${swapType}${swapOptions.timestamp}`] =
-            {
-                paths: paths,
-            };
+            { paths: pathsWithLimits };
 
-        return paths;
+        return pathsWithLimits;
     }
 }

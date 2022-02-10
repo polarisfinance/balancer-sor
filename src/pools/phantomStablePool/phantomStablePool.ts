@@ -22,6 +22,7 @@ import {
 import * as phantomStableMath from '../phantomStablePool/phantomStableMath';
 import { MetaStablePoolPairData } from '../metaStablePool/metaStablePool';
 import cloneDeep from 'lodash.clonedeep';
+import { getPoolPairDataCacheKey } from '../../graph/graph';
 
 enum PairTypes {
     BptToToken,
@@ -50,6 +51,7 @@ export class PhantomStablePool implements PoolBase {
     totalShares: BigNumber;
     tokens: PhantomStablePoolToken[];
     tokensList: string[];
+    limitAmountCache = new Map<string, OldBigNumber>();
     ALMOST_ONE = parseFixed('0.99', 18);
     // Used for VirutalBpt and can be removed if SG is updated with VirtualBpt value
     MAX_TOKEN_BALANCE = BigNumber.from('2').pow('112').sub('1');
@@ -204,11 +206,20 @@ export class PhantomStablePool implements PoolBase {
         poolPairData: PhantomStablePoolPairData,
         swapType: SwapTypes
     ): OldBigNumber {
+        const cacheKey = getPoolPairDataCacheKey(poolPairData, swapType);
+        const cached = this.limitAmountCache.get(cacheKey);
+
+        if (cached) {
+            return cached;
+        }
+
+        let value: OldBigNumber;
+
         // PoolPairData is using balances that have already been exchanged so need to convert back
         if (swapType === SwapTypes.SwapExactIn) {
             // Return max valid amount of tokenIn
             // As an approx - use almost the total balance of token out as we can add any amount of tokenIn and expect some back
-            return bnum(
+            value = bnum(
                 formatFixed(
                     poolPairData.balanceOut
                         .mul(this.ALMOST_ONE)
@@ -218,7 +229,7 @@ export class PhantomStablePool implements PoolBase {
             );
         } else {
             // Return max amount of tokenOut - approx is almost all balance
-            return bnum(
+            value = bnum(
                 formatFixed(
                     poolPairData.balanceOut
                         .mul(this.ALMOST_ONE)
@@ -227,6 +238,10 @@ export class PhantomStablePool implements PoolBase {
                 )
             );
         }
+
+        this.limitAmountCache.set(cacheKey, value);
+
+        return value;
     }
 
     // Updates the balance of a given token for the pool

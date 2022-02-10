@@ -35,6 +35,7 @@ const queryWithLinear = `
           mainIndex
           lowerTarget
           upperTarget
+          totalLiquidity
         }
       }
     `;
@@ -67,6 +68,7 @@ const queryWithOutLinear = `
           principalToken
           baseToken
           swapEnabled
+          totalLiquidity
         }
       }
     `;

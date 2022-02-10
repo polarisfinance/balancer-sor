@@ -15,9 +15,11 @@ export function calculatePathLimits(
         // if (path.limitAmount.isNaN()) throw 'path.limitAmount.isNaN';
         maxLiquidityAvailable = maxLiquidityAvailable.add(path.limitAmount);
     });
+
     const sortedPaths = paths.sort((a, b) => {
         return b.limitAmount.gt(a.limitAmount) ? 1 : -1;
     });
+
     return [sortedPaths, maxLiquidityAvailable];
 }
 
@@ -59,6 +61,7 @@ export function getLimitAmountSwapForPath(
             limit.dp(poolPairData[0].decimalsIn).toString(),
             poolPairData[0].decimalsIn
         );
+
         return result;
     } else {
         limit = path.pools[0].getLimitAmountSwap(
@@ -87,6 +90,7 @@ export function getLimitAmountSwapForPath(
             }
         }
         if (limit.isZero()) return Zero;
+
         return parseFixed(
             limit
                 .dp(poolPairData[poolPairData.length - 1].decimalsOut)

@@ -38,6 +38,7 @@ import {
     _derivativeSpotPriceAfterSwapTokenInForExactBPTOut,
     _derivativeSpotPriceAfterSwapBPTInForExactTokenOut,
 } from './linearMath';
+import { getPoolPairDataCacheKey } from '../../graph/graph';
 
 export enum PairTypes {
     BptToMainToken,
@@ -75,6 +76,7 @@ export class LinearPool implements PoolBase {
     totalShares: BigNumber;
     tokens: LinearPoolToken[];
     tokensList: string[];
+    limitAmountCache = new Map<string, OldBigNumber>();
 
     wrappedIndex: number;
     wrappedDecimals: number;
@@ -215,6 +217,14 @@ export class LinearPool implements PoolBase {
         poolPairData: LinearPoolPairData,
         swapType: SwapTypes
     ): OldBigNumber {
+        const cacheKey = getPoolPairDataCacheKey(poolPairData, swapType);
+        const cached = this.limitAmountCache.get(cacheKey);
+
+        if (cached) {
+            return cached;
+        }
+
+        let value: OldBigNumber;
         // Needs to return human scaled numbers
         const linearPoolPairData = poolPairData as LinearPoolPairData;
         const balanceOutHuman = scale(
@@ -224,7 +234,7 @@ export class LinearPool implements PoolBase {
 
         if (swapType === SwapTypes.SwapExactIn) {
             if (linearPoolPairData.pairType === PairTypes.MainTokenToBpt) {
-                return this._mainTokenInForExactBPTOut(
+                value = this._mainTokenInForExactBPTOut(
                     poolPairData,
                     balanceOutHuman
                         .times(this.ALMOST_ONE.toString())
@@ -234,13 +244,13 @@ export class LinearPool implements PoolBase {
                 linearPoolPairData.pairType === PairTypes.WrappedTokenToBpt
             ) {
                 // Swapping to BPT allows for a very large amount so using pre-minted amount as estimation
-                return scale(bnum(this.MAX_TOKEN_BALANCE.toString()), -18);
+                value = scale(bnum(this.MAX_TOKEN_BALANCE.toString()), -18);
             } else if (
                 linearPoolPairData.pairType === PairTypes.BptToMainToken
             ) {
                 // Limit is amount of BPT in for pool balance of tokenOut
                 // Amount must be in human scale
-                return this._BPTInForExactMainTokenOut(
+                value = this._BPTInForExactMainTokenOut(
                     linearPoolPairData,
                     balanceOutHuman
                         .times(this.ALMOST_ONE.toString())
@@ -256,7 +266,7 @@ export class LinearPool implements PoolBase {
                         .div(ONE.toString())
                 );
                 // Returning Human scale
-                return limit;
+                value = limit;
             } else if (
                 linearPoolPairData.pairType ===
                     PairTypes.MainTokenToWrappedToken ||
@@ -269,8 +279,10 @@ export class LinearPool implements PoolBase {
                         .div(ONE)
                         .toString()
                 );
-                return scale(limit, -poolPairData.decimalsOut);
-            } else return bnum(0);
+                value = scale(limit, -poolPairData.decimalsOut);
+            } else {
+                value = bnum(0);
+            }
         } else {
             if (
                 linearPoolPairData.pairType === PairTypes.MainTokenToBpt ||
@@ -282,7 +294,7 @@ export class LinearPool implements PoolBase {
                         .div(ONE)
                         .toString()
                 );
-                return scale(limit, -poolPairData.decimalsOut);
+                value = scale(limit, -poolPairData.decimalsOut);
             } else if (
                 linearPoolPairData.pairType === PairTypes.BptToMainToken ||
                 linearPoolPairData.pairType === PairTypes.BptToWrappedToken ||
@@ -297,9 +309,15 @@ export class LinearPool implements PoolBase {
                         .div(ONE)
                         .toString()
                 );
-                return scale(limit, -poolPairData.decimalsOut);
-            } else return bnum(0);
+                value = scale(limit, -poolPairData.decimalsOut);
+            } else {
+                value = bnum(0);
+            }
         }
+
+        this.limitAmountCache.set(cacheKey, value);
+
+        return value;
     }
 
     // Updates the balance of a given token for the pool

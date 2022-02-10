@@ -610,6 +610,7 @@ function redistributeInputAmounts(
     let sumInverseDerivativeSPaSsForNegativeAmounts = ZERO;
     let sumInverseDerivativeSPaSsForExceedingAmounts = ZERO;
     let sumNegativeOrExceedingSwapAmounts = ZERO;
+
     swapAmounts.forEach((swapAmount, i) => {
         // Amount is negative
         if (swapAmount.lte(ZERO)) {

@@ -26,6 +26,7 @@ import {
 } from './weightedMath';
 import { BigNumber, formatFixed, parseFixed } from '@ethersproject/bignumber';
 import { WeiPerEther as ONE } from '@ethersproject/constants';
+import { getPoolPairDataCacheKey } from '../../graph/graph';
 
 export type WeightedPoolToken = Pick<
     NoNullableField<SubgraphToken>,
@@ -49,6 +50,7 @@ export class WeightedPool implements PoolBase {
     tokensList: string[];
     MAX_IN_RATIO = parseFixed('0.3', 18);
     MAX_OUT_RATIO = parseFixed('0.3', 18);
+    limitAmountCache = new Map<string, OldBigNumber>();
 
     static fromPool(pool: SubgraphPoolBase): WeightedPool {
         if (!pool.totalWeight)
@@ -146,21 +148,34 @@ export class WeightedPool implements PoolBase {
         poolPairData: PoolPairBase,
         swapType: SwapTypes
     ): OldBigNumber {
+        const cacheKey = getPoolPairDataCacheKey(poolPairData, swapType);
+        const cached = this.limitAmountCache.get(cacheKey);
+
+        if (cached) {
+            return cached;
+        }
+
+        let value: OldBigNumber;
+
         if (swapType === SwapTypes.SwapExactIn) {
-            return bnum(
+            value = bnum(
                 formatFixed(
                     poolPairData.balanceIn.mul(this.MAX_IN_RATIO).div(ONE),
                     poolPairData.decimalsIn
                 )
             );
         } else {
-            return bnum(
+            value = bnum(
                 formatFixed(
                     poolPairData.balanceOut.mul(this.MAX_OUT_RATIO).div(ONE),
                     poolPairData.decimalsOut
                 )
             );
         }
+
+        this.limitAmountCache.set(cacheKey, value);
+
+        return value;
     }
 
     // Updates the balance of a given token for the pool

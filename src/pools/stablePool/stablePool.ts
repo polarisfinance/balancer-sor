@@ -24,6 +24,7 @@ import {
     _derivativeSpotPriceAfterSwapTokenInForExactTokenOut,
 } from './stableMath';
 import { _calcOutGivenIn, _calcInGivenOut } from './stableMathBigInt';
+import { getPoolPairDataCacheKey } from '../../graph/graph';
 
 type StablePoolToken = Pick<SubgraphToken, 'address' | 'balance' | 'decimals'>;
 
@@ -45,6 +46,7 @@ export class StablePool implements PoolBase {
     totalShares: BigNumber;
     tokens: StablePoolToken[];
     tokensList: string[];
+    limitAmountCache = new Map<string, OldBigNumber>();
     MAX_IN_RATIO = parseFixed('0.3', 18);
     MAX_OUT_RATIO = parseFixed('0.3', 18);
 
@@ -143,24 +145,37 @@ export class StablePool implements PoolBase {
         poolPairData: PoolPairBase,
         swapType: SwapTypes
     ): OldBigNumber {
+        const cacheKey = getPoolPairDataCacheKey(poolPairData, swapType);
+        const cached = this.limitAmountCache.get(cacheKey);
+
+        if (cached) {
+            return cached;
+        }
+
+        let value: OldBigNumber;
+
         // We multiply ratios by 10**-18 because we are in normalized space
         // so 0.5 should be 0.5 and not 500000000000000000
         // TODO: update bmath to use everything normalized
         if (swapType === SwapTypes.SwapExactIn) {
-            return bnum(
+            value = bnum(
                 formatFixed(
                     poolPairData.balanceIn.mul(this.MAX_IN_RATIO).div(ONE),
                     poolPairData.decimalsIn
                 )
             );
         } else {
-            return bnum(
+            value = bnum(
                 formatFixed(
                     poolPairData.balanceOut.mul(this.MAX_OUT_RATIO).div(ONE),
                     poolPairData.decimalsOut
                 )
             );
         }
+
+        this.limitAmountCache.set(cacheKey, value);
+
+        return value;
     }
 
     // Updates the balance of a given token for the pool

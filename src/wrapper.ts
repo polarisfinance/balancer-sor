@@ -178,6 +178,11 @@ export class SOR {
             swapOptions
         );
 
+        console.log(
+            'paths',
+            paths.map((path) => path.swaps)
+        );
+
         if (paths.length == 0) return cloneDeep(EMPTY_SWAPINFO);
 
         // Path is guaranteed to contain both tokenIn and tokenOut
@@ -202,6 +207,11 @@ export class SOR {
             swapOptions.swapGas
         );
 
+        console.log('swap amount', swapAmount.toString());
+        /*console.log(
+            'calling bestPaths',
+            paths.map((path) => path.swaps)
+        );*/
         // Returns list of swaps
         const [swaps, total, marketSp, totalConsideringFees] =
             this.getBestPaths(
@@ -213,6 +223,7 @@ export class SOR {
                 costOutputToken,
                 swapOptions.maxPools
             );
+        console.log('after calling bestPaths');
 
         const swapInfo = formatSwaps(
             swaps,

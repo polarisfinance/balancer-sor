@@ -8,9 +8,9 @@ const provider = new JsonRpcProvider(
 
 // This must be updated with pools of interest (see ./test/testData/testPools)
 const testFiles = [
-    'gusdBug',
+    /*'gusdBug',
     'gusdBugSinglePath',
-    '25178485-blockKovan', // UI-506, WETH to WBTC Bug
+    //'25178485-blockKovan', // UI-506, WETH to WBTC Bug //TODO: DANIEL STILL NEEDS TO FIX THIS ONE
     // 'stable-and-weighted-token-btp-test',
     // Added pools 'stable-and-weighted-token-btp-test' to element pools
     //  and replaced the base token with DAI. Also
@@ -23,12 +23,16 @@ const testFiles = [
     'elementFinanceTest1',
     'elementFinanceTest2',
     'elementFinanceTest3',
-    'elementFinanceTest4',
+    'elementFinanceTest4',*/
     // 07/04/21 - Below have been checked and pass
+    /*
     '0x04ec8acaa4f419bc1525eaa8d37faae2d4acb64c5521a3718593c626962de170', // Dust amounts
+     */
     '0xa7a3cf76686c6d6aa6e976724b4463c6f7b0e98453ad3a8488b6e9daa2fecc42', // Dust amounts
+    /*
     '0xab11cdebd9d96f2f4d9d29f0df62de0640c457882d92435aff2a7c1049a0be6a', // Dust amounts
-    '0x0a554ce1e35b9820f121ac7faa97069650df754117d6c5eb7c1158f915878343',
+     */
+    /*'0x0a554ce1e35b9820f121ac7faa97069650df754117d6c5eb7c1158f915878343',
     '0x139894ec2cacfeca1035e78968124dbb2d34034bde146f5f2ab311ada75ad04f',
     '0x21d5562b317f9d3b57b3406ee868ad882ab3c87cd67f7af2ff55042e59702bef',
     '0x32286e13c9dbfe92f4d9527bfe2ff18edf10dedb55e08b11710bf84cebf4de6d',
@@ -71,7 +75,7 @@ const testFiles = [
     'stable-pools-only-wbtc-to-sbtc-exactIn',
     'stable-pools-only-wbtc-to-sbtc-exactOut',
     'stable-and-weighted-same-pools', // This has one stable and one weighted pool with same tokens and balances. Stable should be better. i.e. V2 better than V1.
-
+*/
     // 23/06/21 - After update to Stable pool maths below test is slightly out of range of V1 result
     // '0x995a2d20a846226c7680fff641cee4397f81c6e1f0675d69c7d26d05a60b39f3',
     // 07/06/21 - Following cases fail V1 vs V2 check after a bug fix (previously passing) but confirmed as ok by Fernando

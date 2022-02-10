@@ -93,6 +93,8 @@ export interface SubgraphPoolBase {
     wrappedIndex?: number;
     lowerTarget?: string;
     upperTarget?: string;
+
+    totalLiquidity?: string;
 }
 
 export type SubgraphToken = {
@@ -127,6 +129,10 @@ export interface SwapInfo {
 
 export interface PoolDictionary {
     [poolId: string]: PoolBase;
+}
+
+export interface PoolAddressDictionary {
+    [address: string]: PoolBase;
 }
 
 export interface PoolPairDictionary {

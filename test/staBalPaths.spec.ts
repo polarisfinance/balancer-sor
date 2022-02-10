@@ -1,5 +1,7 @@
 // TS_NODE_PROJECT='tsconfig.testing.json' npx mocha -r ts-node/register test/staBalPaths.spec.ts
 // eslint-disable-next-line @typescript-eslint/no-var-requires
+import { keyBy } from 'lodash';
+
 require('dotenv').config();
 import { expect } from 'chai';
 import cloneDeep from 'lodash.clonedeep';
@@ -57,7 +59,8 @@ describe(`staBalPaths.`, () => {
                 tokenIn,
                 tokenOut,
                 hopTokens,
-                poolsFiltered
+                poolsFiltered,
+                keyBy(poolsAll, (pool) => pool.address)
             );
 
             expect(pathData.length).to.eq(1);
@@ -146,7 +149,8 @@ describe(`staBalPaths.`, () => {
                         hopTokenStaBal,
                         sorConfigTest.usdcConnectingPool.usdc,
                     ],
-                    [staBalPoolIn, usdcConnectingPool]
+                    [staBalPoolIn, usdcConnectingPool],
+                    keyBy(poolsAll, (pool) => pool.address)
                 );
 
                 checkPath(

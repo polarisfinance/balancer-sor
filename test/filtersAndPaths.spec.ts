@@ -21,6 +21,7 @@ import testPools from './testData/filterTestPools.json';
 import { Zero } from '@ethersproject/constants';
 import { parseFixed, BigNumber } from '@ethersproject/bignumber';
 import { DAI, USDC, WETH } from './lib/constants';
+import { keyBy } from 'lodash';
 
 describe('Tests pools filtering and path processing', () => {
     it('weighted test pools check', () => {
@@ -776,7 +777,8 @@ function filter(
         tokenIn,
         tokenOut,
         hopTokens,
-        cloneDeep(poolsOfInterestDictionary)
+        cloneDeep(poolsOfInterestDictionary),
+        keyBy(poolsAll, (pool) => pool.address)
     );
 
     let pathsSorted: NewPath[] = [];
