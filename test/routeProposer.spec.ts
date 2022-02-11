@@ -19,7 +19,7 @@ import {
     findPaths,
     getMainTokenToPoolTokenMap,
     PathSegment,
-    sortPaths,
+    sortAndFilterPaths,
 } from '../src/graph/graph';
 
 require('dotenv').config();
@@ -409,7 +409,7 @@ describe(`RouteProposer.`, () => {
 
             //sort paths by most liquid
             console.time('sorting paths');
-            const sortedPaths = sortPaths(paths);
+            const sortedPaths = sortAndFilterPaths(paths);
             console.timeEnd('sorting paths');
 
             console.time('create new paths');

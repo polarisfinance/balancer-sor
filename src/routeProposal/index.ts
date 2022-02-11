@@ -10,7 +10,12 @@ import {
     SwapTypes,
 } from '../types';
 import { mapKeys } from 'lodash';
-import { createGraph, findPaths, PathSegment, sortPaths } from '../graph/graph';
+import {
+    createGraph,
+    findPaths,
+    PathSegment,
+    sortAndFilterPaths,
+} from '../graph/graph';
 
 export class RouteProposer {
     cache: Record<string, { paths: NewPath[] }> = {};
@@ -67,7 +72,7 @@ export class RouteProposer {
             }
         );
 
-        const sortedPaths = sortPaths(graphPaths);
+        const sortedPaths = sortAndFilterPaths(graphPaths);
 
         const pathCache: {
             [key: string]: { swaps: Swap[]; pairData: PoolPairBase[] };

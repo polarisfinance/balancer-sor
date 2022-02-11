@@ -223,14 +223,52 @@ function expandPath(
     });
 }
 
-export function sortPaths(paths: PathSegment[][]): PathSegment[][] {
-    return _.orderBy(
+export function sortAndFilterPaths(
+    paths: PathSegment[][],
+    allowDuplicateHops = false
+): PathSegment[][] {
+    const sortedPaths = _.orderBy(
         paths,
         (path) =>
             _.sumBy(path, (segment) => segment.normalizedLiquidity.toNumber()) /
             path.length,
         'desc'
     );
+
+    if (allowDuplicateHops) {
+        return sortedPaths;
+    }
+
+    const selected: PathSegment[][] = [];
+
+    for (const path of sortedPaths) {
+        if (!pathHasDuplicateHop(path, selected)) {
+            selected.push(path);
+        }
+    }
+
+    return selected;
+}
+
+function pathHasDuplicateHop(
+    pathToCheck: PathSegment[],
+    paths: PathSegment[][]
+): boolean {
+    const keysToCheck = pathToCheck.map(
+        (segment) => `${segment.poolId}-${segment.tokenIn}-${segment.tokenOut}`
+    );
+
+    for (const path of paths) {
+        for (const segment of path) {
+            const pathKey = `${segment.poolId}-${segment.tokenIn}-${segment.tokenOut}`;
+
+            if (keysToCheck.includes(pathKey)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 export function getPoolPairDataCacheKey(
