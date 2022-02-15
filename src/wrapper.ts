@@ -212,7 +212,6 @@ export class SOR {
                 costOutputToken,
                 swapOptions.maxPools
             );
-        console.log('best swaps', swaps);
 
         const swapInfo = formatSwaps(
             swaps,

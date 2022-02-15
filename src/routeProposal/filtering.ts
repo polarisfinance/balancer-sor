@@ -30,7 +30,7 @@ export const filterPoolsByType = (
 
 /*
 The main purpose of this function is to:
-- filter to  allPools to pools that have:
+- filter to  poolsAll to pools that have:
     - TokenIn & TokenOut, i.e. a direct swap pool
     - TokenIn & !TokenOut, i.e. a hop pool with only TokenIn
     - !TokenIn & TokenOut, i.e. a hop pool with only TokenOut

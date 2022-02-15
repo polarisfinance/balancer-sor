@@ -371,7 +371,7 @@ describe(`RouteProposer.`, () => {
 
         try {
             console.time('creating graph');
-            const graph = createGraph(poolsAllDict);
+            const graph = createGraph(dict);
             console.timeEnd('creating graph');
             const edges = graph.edges();
 
@@ -384,11 +384,13 @@ describe(`RouteProposer.`, () => {
             console.time('find paths');
             findPaths(
                 graph,
+                dict,
                 tokenIn,
                 tokenOut,
                 [tokenIn],
                 1,
                 2,
+                false,
                 (foundPaths) => {
                     paths = [...paths, ...foundPaths];
                 }

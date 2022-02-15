@@ -442,7 +442,13 @@ describe(`Tests for wrapper class.`, () => {
             { gasPrice, maxPools }
         );
 
-        const expectedTokenAddressesEth = [tokenIn, DAI.address, AddressZero];
+        const expectedTokenAddressesEth = [
+            tokenIn,
+            DAI.address,
+            AddressZero,
+            //daniel: the new algorithm finds a more optimal path
+            '0x514910771af9ca656af840dff83e8264ecf986ca',
+        ];
 
         expect(expectedTokenAddressesEth).to.deep.eq(
             swapInfoEth.tokenAddresses
@@ -459,7 +465,13 @@ describe(`Tests for wrapper class.`, () => {
             { gasPrice, maxPools }
         );
 
-        const expectedTokenAddressesWeth = [tokenIn, DAI.address, WETH.address];
+        const expectedTokenAddressesWeth = [
+            tokenIn,
+            DAI.address,
+            WETH.address,
+            //daniel: the new algorithm finds a more optimal path
+            '0x514910771af9ca656af840dff83e8264ecf986ca',
+        ];
 
         // Swaps/amts, etc should be same. Token list should be different
         expect(expectedTokenAddressesWeth).to.deep.eq(swapInfo.tokenAddresses);

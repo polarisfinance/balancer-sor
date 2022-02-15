@@ -72,7 +72,7 @@ export class RouteProposer {
             }
         );
 
-        const sortedPaths = sortAndFilterPaths(graphPaths);
+        const sortedPaths = sortAndFilterPaths(graphPaths, swapOptions);
 
         const pathCache: {
             [key: string]: { swaps: Swap[]; pairData: PoolPairBase[] };

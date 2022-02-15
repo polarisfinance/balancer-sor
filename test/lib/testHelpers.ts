@@ -192,6 +192,8 @@ function testReturnAmountAgainstV1(
 ): void {
     if (swapInfo.returnAmount.eq(v1SwapData.returnAmount.toString())) return;
 
+    console.log('swapInfo.returnAmount', swapInfo.returnAmount.toString());
+    console.log('v1SwapData.returnAmount', v1SwapData.returnAmount.toString());
     const relDiffBn = calcRelativeDiffBn(
         swapInfo.returnAmount,
         BigNumber.from(v1SwapData.returnAmount.toString())
@@ -313,35 +315,6 @@ export function calcRelativeDiffBn(
         expected.sub(actual).mul(1000000).div(expected).abs().toNumber() /
         1000000
     );
-}
-
-export function countPoolSwapPairTypes(
-    poolsOfInterestDictionary: PoolDictionary
-): [number, number, number, number, number] {
-    let noDirect = 0,
-        noHopIn = 0,
-        noHopOut = 0,
-        noWeighted = 0,
-        noStable = 0;
-    for (const k in poolsOfInterestDictionary) {
-        if (poolsOfInterestDictionary[k].swapPairType === SwapPairType.Direct)
-            noDirect++;
-        else if (
-            poolsOfInterestDictionary[k].swapPairType === SwapPairType.HopIn
-        )
-            noHopIn++;
-        else if (
-            poolsOfInterestDictionary[k].swapPairType === SwapPairType.HopOut
-        )
-            noHopOut++;
-
-        if (poolsOfInterestDictionary[k].poolType === PoolTypes.Weighted)
-            noWeighted++;
-        else if (poolsOfInterestDictionary[k].poolType === PoolTypes.Stable)
-            noStable++;
-    }
-
-    return [noDirect, noHopIn, noHopOut, noWeighted, noStable];
 }
 
 export async function getFullSwap(

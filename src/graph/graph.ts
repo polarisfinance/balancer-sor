@@ -4,6 +4,7 @@ import {
     PoolPairBase,
     PoolTypes,
     Swap,
+    SwapOptions,
     SwapTypes,
 } from '../types';
 import _, { keyBy, mapValues } from 'lodash';
@@ -14,7 +15,7 @@ import { LinearPool } from '../pools/linearPool/linearPool';
 export interface GraphEdgeData {
     poolId: string;
     poolAddress: string;
-    normalizedLiquidity: OldBigNumber;
+    limitAmountSwap: OldBigNumber;
     poolPair: PoolPairBase;
 }
 
@@ -57,8 +58,10 @@ export function createGraph(
                         poolId: pool.id,
                         poolAddress: pool.address,
                         poolPair,
-                        normalizedLiquidity:
-                            pool.getNormalizedLiquidity(poolPair),
+                        limitAmountSwap: pool.getLimitAmountSwap(
+                            poolPair,
+                            SwapTypes.SwapExactIn
+                        ),
                     }
                 );
             }
@@ -89,8 +92,10 @@ export function createGraph(
                         poolId: pool.id,
                         poolAddress: pool.address,
                         poolPair,
-                        normalizedLiquidity:
-                            pool.getNormalizedLiquidity(poolPair),
+                        limitAmountSwap: pool.getLimitAmountSwap(
+                            poolPair,
+                            SwapTypes.SwapExactIn
+                        ),
                     }
                 );
             }
@@ -225,27 +230,48 @@ function expandPath(
 
 export function sortAndFilterPaths(
     paths: PathSegment[][],
-    allowDuplicateHops = false
+    options: SwapOptions
 ): PathSegment[][] {
     const sortedPaths = _.orderBy(
         paths,
         (path) =>
-            _.sumBy(path, (segment) => segment.normalizedLiquidity.toNumber()) /
+            _.sumBy(path, (segment) => segment.limitAmountSwap.toNumber()) /
             path.length,
         'desc'
     );
 
-    if (allowDuplicateHops) {
-        return sortedPaths;
-    }
-
     const selected: PathSegment[][] = [];
 
     for (const path of sortedPaths) {
-        if (!pathHasDuplicateHop(path, selected)) {
-            selected.push(path);
+        //remove any path that has a matching tokenIn -> poolId -> tokenOut as another path in the list
+        if (pathHasDuplicateHop(path, selected)) {
+            continue;
         }
+
+        if (options.maxPools === 1 && path.length > 1) {
+            continue;
+        }
+
+        selected.push(path);
     }
+
+    /*if (!options.allowDuplicatePools) {
+        let keys: string[] = [];
+        const temp = selected;
+        selected = [];
+
+        for (const path of temp) {
+            //remove any paths that contain a poolId that already exists
+            const pathKeys = path.map((segment) => `${segment.poolId}`);
+
+            if (_.intersection(keys, pathKeys).length > 0) {
+                continue;
+            }
+
+            selected.push(path);
+            keys = [...keys, ...pathKeys];
+        }
+    }*/
 
     return selected;
 }

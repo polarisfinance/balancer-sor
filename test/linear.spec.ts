@@ -346,7 +346,7 @@ describe('linear pool tests', () => {
                     maxPools
                 );
 
-                assert.equal(paths.length, 5);
+                assert.equal(paths.length, 4);
                 checkPath(
                     ['linearDAI', 'staBal3Id', 'linearUSDC'],
                     poolAllDict,
@@ -367,13 +367,6 @@ describe('linear pool tests', () => {
                     tokenOut
                 );
                 checkPath(
-                    ['weightedDaiWeth', 'weightedUsdcWeth'],
-                    poolAllDict,
-                    paths[2],
-                    tokenIn,
-                    tokenOut
-                );
-                checkPath(
                     [
                         'weightedDaiWeth',
                         'weightedWethStaBal3Id',
@@ -381,14 +374,14 @@ describe('linear pool tests', () => {
                         'linearUSDC',
                     ],
                     poolAllDict,
-                    paths[3],
+                    paths[2],
                     tokenIn,
                     tokenOut
                 );
                 checkPath(
                     ['weightedDaiUsdc'],
                     poolAllDict,
-                    paths[4],
+                    paths[3],
                     tokenIn,
                     tokenOut
                 );
@@ -498,7 +491,7 @@ describe('linear pool tests', () => {
     });
 
     context('Long paths using linear and WETH-staBAL3 pool', () => {
-        it('should return 2 valid linear paths, USDC>BAL', async () => {
+        it('should return 1 valid linear path, USDC>BAL', async () => {
             const tokenIn = USDC.address;
             const tokenOut = BAL.address;
             const maxPools = 10;
@@ -510,7 +503,8 @@ describe('linear pool tests', () => {
                 smallLinear.pools,
                 maxPools
             );
-            assert.equal(paths.length, 2);
+
+            assert.equal(paths.length, 1);
             // USDC>[linearUSDC]>bUSDC>[staBAL3]>staBal3Bpt>[staBAL3Weth]>WETH>[BalWeth]>BAL
             checkPath(
                 [
@@ -521,14 +515,6 @@ describe('linear pool tests', () => {
                 ],
                 poolsAllDict,
                 paths[0],
-                tokenIn,
-                tokenOut
-            );
-
-            checkPath(
-                ['weightedUsdcWeth', 'weightedBalWeth'],
-                poolsAllDict,
-                paths[1],
                 tokenIn,
                 tokenOut
             );
@@ -545,7 +531,7 @@ describe('linear pool tests', () => {
                 smallLinear.pools,
                 maxPools
             );
-            assert.equal(paths.length, 2);
+            assert.equal(paths.length, 1);
 
             // BAL>[BalWeth]>WETH>[staBAL3Weth]>staBal3Bpt>[staBAL3]>bUSDC>[linearUSDC]>USDC
             checkPath(
@@ -557,13 +543,6 @@ describe('linear pool tests', () => {
                 ],
                 poolsAllDict,
                 paths[0],
-                tokenIn,
-                tokenOut
-            );
-            checkPath(
-                ['weightedBalWeth', 'weightedUsdcWeth'],
-                poolsAllDict,
-                paths[1],
                 tokenIn,
                 tokenOut
             );
@@ -732,8 +711,8 @@ describe('linear pool tests', () => {
                     fullKovanPools.pools,
                     sorConfigKovan
                 );
-                // daniel: this was previously 11062044, but the new route algo finds a better path
-                expect(returnAmount).to.eq('70169832');
+                // daniel: this was previously 11062044, but the new route algo finds a marginally worse path
+                expect(returnAmount).to.eq('11061470');
             });
 
             it('USDT>BAL, SwapExactOut', async () => {
@@ -758,8 +737,8 @@ describe('linear pool tests', () => {
                     sorConfigKovan
                 );
 
-                // daniel: this was previously 81894035538462519296, but the new route algo finds a better path
-                expect(returnAmount).to.eq('653098636918112');
+                // daniel: this was previously 81894035538462519296, but the new route algo finds a marginally worse path
+                expect(returnAmount).to.eq('81899098582251741376');
             });
         });
 

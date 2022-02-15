@@ -44,7 +44,7 @@
             "id": "usdcConnecting",
             "address": "0x0000000000000000000000000000000000000013",
             "amp": "200",
-            "poolType": "Stable",
+            "poolType": "MetaStable",
             "swapFee": "0.0005",
             "swapEnabled": true,
             "tokens": [
@@ -75,7 +75,7 @@
             "id": "staBalPair1",
             "address": "0x0000000000000000000000000000000000000011",
             "amp": "200",
-            "poolType": "Stable",
+            "poolType": "MetaStable",
             "swapFee": "0.0005",
             "swapEnabled": true,
             "tokens": [
@@ -106,7 +106,7 @@
             "id": "staBalPair2",
             "address": "0x0000000000000000000000000000000000000012",
             "amp": "200",
-            "poolType": "Stable",
+            "poolType": "MetaStable",
             "swapFee": "0.0005",
             "swapEnabled": true,
             "tokens": [
