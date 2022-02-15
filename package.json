@@ -7,7 +7,6 @@
     "types": "dist/index.d.ts",
     "scripts": {
         "build": "rollup -c",
-        "prepack": "yarn build",
         "test": "TS_NODE_PROJECT='tsconfig.testing.json' nyc mocha -r ts-node/register test/*.spec.ts",
         "coverage": "nyc report --reporter=text-lcov | coveralls",
         "lint": "eslint ./src ./test --ext .ts --max-warnings 0"
