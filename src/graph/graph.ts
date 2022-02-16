@@ -247,9 +247,9 @@ export function sortAndFilterPaths(
 
     for (const path of sortedPaths) {
         //remove any path that has a matching tokenIn -> poolId -> tokenOut as another path in the list
-        if (pathHasDuplicateHop(path, selected)) {
+        /*if (pathHasDuplicateHop(path, selected)) {
             continue;
-        }
+        }*/
 
         if (options.maxPools === 1 && path.length > 1) {
             continue;

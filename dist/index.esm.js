@@ -32098,29 +32098,15 @@ function sortAndFilterPaths(paths, options) {
     const selected = [];
     for (const path of sortedPaths) {
         //remove any path that has a matching tokenIn -> poolId -> tokenOut as another path in the list
-        if (pathHasDuplicateHop(path, selected)) {
+        /*if (pathHasDuplicateHop(path, selected)) {
             continue;
-        }
+        }*/
         if (options.maxPools === 1 && path.length > 1) {
             continue;
         }
         selected.push(path);
     }
     return selected;
-}
-function pathHasDuplicateHop(pathToCheck, paths) {
-    const keysToCheck = pathToCheck.map(
-        (segment) => `${segment.poolId}-${segment.tokenIn}-${segment.tokenOut}`
-    );
-    for (const path of paths) {
-        for (const segment of path) {
-            const pathKey = `${segment.poolId}-${segment.tokenIn}-${segment.tokenOut}`;
-            if (keysToCheck.includes(pathKey)) {
-                return true;
-            }
-        }
-    }
-    return false;
 }
 function getPoolPairDataCacheKey(poolPairData, swapType) {
     return `${poolPairData.tokenIn}-${poolPairData.tokenOut}-${swapType}`;
