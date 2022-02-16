@@ -88,6 +88,22 @@ export class RouteProposer {
             }
         );
 
+        if (graphPaths.length === 0) {
+            findPaths(
+                this.graph,
+                poolsAllAddressDict,
+                tokenIn,
+                tokenOut,
+                [tokenIn],
+                1,
+                3,
+                isRelayerRoute,
+                (foundPaths) => {
+                    graphPaths = [...graphPaths, ...foundPaths];
+                }
+            );
+        }
+
         const sortedPaths = sortAndFilterPaths(graphPaths, swapOptions);
 
         const pathCache: {
