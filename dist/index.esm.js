@@ -32088,39 +32088,24 @@ function sortAndFilterPaths(paths, options) {
     const sortedPaths = _.orderBy(
         paths,
         [
-            (path) => path.length,
             (path) =>
                 _.sumBy(path, (segment) => segment.limitAmountSwap.toNumber()) /
                 path.length,
         ],
-        ['asc', 'desc']
+        ['desc']
     );
     const selected = [];
     for (const path of sortedPaths) {
         //remove any path that has a matching tokenIn -> poolId -> tokenOut as another path in the list
-        if (pathHasDuplicateHop(path, selected)) {
+        /*if (pathHasDuplicateHop(path, selected)) {
             continue;
-        }
+        }*/
         if (options.maxPools === 1 && path.length > 1) {
             continue;
         }
         selected.push(path);
     }
-    return selected;
-}
-function pathHasDuplicateHop(pathToCheck, paths) {
-    const keysToCheck = pathToCheck.map(
-        (segment) => `${segment.poolId}-${segment.tokenIn}-${segment.tokenOut}`
-    );
-    for (const path of paths) {
-        for (const segment of path) {
-            const pathKey = `${segment.poolId}-${segment.tokenIn}-${segment.tokenOut}`;
-            if (keysToCheck.includes(pathKey)) {
-                return true;
-            }
-        }
-    }
-    return false;
+    return selected.slice(0, 150);
 }
 function getPoolPairDataCacheKey(poolPairData, swapType) {
     return `${poolPairData.tokenIn}-${poolPairData.tokenOut}-${swapType}`;
@@ -40630,6 +40615,21 @@ class RouteProposer {
                 graphPaths = [...graphPaths, ...foundPaths];
             }
         );
+        if (graphPaths.length === 0) {
+            findPaths(
+                this.graph,
+                poolsAllAddressDict,
+                tokenIn,
+                tokenOut,
+                [tokenIn],
+                1,
+                3,
+                isRelayerRoute,
+                (foundPaths) => {
+                    graphPaths = [...graphPaths, ...foundPaths];
+                }
+            );
+        }
         const sortedPaths = sortAndFilterPaths(graphPaths, swapOptions);
         const pathCache = {};
         const paths = sortedPaths.map((path) => {
