@@ -255,24 +255,6 @@ export function sortAndFilterPaths(
         selected.push(path);
     }
 
-    /*if (!options.allowDuplicatePools) {
-        let keys: string[] = [];
-        const temp = selected;
-        selected = [];
-
-        for (const path of temp) {
-            //remove any paths that contain a poolId that already exists
-            const pathKeys = path.map((segment) => `${segment.poolId}`);
-
-            if (_.intersection(keys, pathKeys).length > 0) {
-                continue;
-            }
-
-            selected.push(path);
-            keys = [...keys, ...pathKeys];
-        }
-    }*/
-
     return selected;
 }
 

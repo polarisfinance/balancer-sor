@@ -13,11 +13,14 @@ import { mapKeys } from 'lodash';
 import {
     createGraph,
     findPaths,
+    GraphEdgeData,
     PathSegment,
     sortAndFilterPaths,
 } from '../graph/graph';
+import { MultiUndirectedGraph } from 'graphology';
 
 export class RouteProposer {
+    graph: MultiUndirectedGraph<any, GraphEdgeData> | null = null;
     cache: Record<string, { paths: NewPath[] }> = {};
 
     constructor(private readonly config: SorConfig) {}
@@ -52,14 +55,17 @@ export class RouteProposer {
             (pool) => pool.address
         );
 
-        const graph = createGraph(poolsAllAddressDict);
+        if (this.graph === null) {
+            this.graph = createGraph(poolsAllAddressDict);
+        }
+
         let graphPaths: PathSegment[][] = [];
         const isRelayerRoute = !!(
             poolsAllAddressDict[tokenIn] || poolsAllAddressDict[tokenOut]
         );
 
         findPaths(
-            graph,
+            this.graph,
             poolsAllAddressDict,
             tokenIn,
             tokenOut,
@@ -91,43 +97,6 @@ export class RouteProposer {
                 pathCache
             );
         });
-
-        //console.log('paths', paths[0]);
-
-        /*const [poolsFilteredDict, hopTokens] = filterPoolsOfInterest(
-            poolsAllDict,
-            tokenIn,
-            tokenOut,
-            swapOptions.maxPools
-        );
-
-        const [, pathData] = filterHopPools(
-            tokenIn,
-            tokenOut,
-            hopTokens,
-            poolsFilteredDict,
-            poolsAllDict
-        );
-
-        const pathsUsingLinear: NewPath[] = getLinearStaBal3Paths(
-            tokenIn,
-            tokenOut,
-            poolsAllDict,
-            poolsFilteredDict,
-            this.config
-        );
-
-        const pathsUsingStaBal = getPathsUsingStaBalPool(
-            tokenIn,
-            tokenOut,
-            poolsAllDict,
-            poolsFilteredDict,
-            this.config
-        );
-
-        const combinedPathData = pathData
-            .concat(...pathsUsingLinear)
-            .concat(...pathsUsingStaBal);*/
 
         const [pathsWithLimits] = calculatePathLimits(paths, swapType);
 
