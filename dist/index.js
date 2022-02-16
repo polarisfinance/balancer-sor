@@ -32087,10 +32087,13 @@ function expandPath(graph, allPools, isRelayerRoute, path) {
 function sortAndFilterPaths(paths, options) {
     const sortedPaths = _.orderBy(
         paths,
-        (path) =>
-            _.sumBy(path, (segment) => segment.limitAmountSwap.toNumber()) /
-            path.length,
-        'desc'
+        [
+            (path) => path.length,
+            (path) =>
+                _.sumBy(path, (segment) => segment.limitAmountSwap.toNumber()) /
+                path.length,
+        ],
+        ['asc', 'desc']
     );
     const selected = [];
     for (const path of sortedPaths) {
