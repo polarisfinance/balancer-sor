@@ -235,21 +235,20 @@ export function sortAndFilterPaths(
     const sortedPaths = _.orderBy(
         paths,
         [
-            (path) => path.length,
             (path) =>
                 _.sumBy(path, (segment) => segment.limitAmountSwap.toNumber()) /
                 path.length,
         ],
-        ['asc', 'desc']
+        ['desc']
     );
 
     const selected: PathSegment[][] = [];
 
     for (const path of sortedPaths) {
         //remove any path that has a matching tokenIn -> poolId -> tokenOut as another path in the list
-        if (pathHasDuplicateHop(path, selected)) {
+        /*if (pathHasDuplicateHop(path, selected)) {
             continue;
-        }
+        }*/
 
         if (options.maxPools === 1 && path.length > 1) {
             continue;
@@ -258,7 +257,7 @@ export function sortAndFilterPaths(
         selected.push(path);
     }
 
-    return selected;
+    return selected.slice(0, 150);
 }
 
 function pathHasDuplicateHop(
