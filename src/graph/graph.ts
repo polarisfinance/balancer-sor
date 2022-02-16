@@ -234,10 +234,13 @@ export function sortAndFilterPaths(
 ): PathSegment[][] {
     const sortedPaths = _.orderBy(
         paths,
-        (path) =>
-            _.sumBy(path, (segment) => segment.limitAmountSwap.toNumber()) /
-            path.length,
-        'desc'
+        [
+            (path) => path.length,
+            (path) =>
+                _.sumBy(path, (segment) => segment.limitAmountSwap.toNumber()) /
+                path.length,
+        ],
+        ['asc', 'desc']
     );
 
     const selected: PathSegment[][] = [];
