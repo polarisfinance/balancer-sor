@@ -32103,23 +32103,6 @@ function sortAndFilterPaths(paths, options) {
         }
         selected.push(path);
     }
-    /*if (!options.allowDuplicatePools) {
-        let keys: string[] = [];
-        const temp = selected;
-        selected = [];
-
-        for (const path of temp) {
-            //remove any paths that contain a poolId that already exists
-            const pathKeys = path.map((segment) => `${segment.poolId}`);
-
-            if (_.intersection(keys, pathKeys).length > 0) {
-                continue;
-            }
-
-            selected.push(path);
-            keys = [...keys, ...pathKeys];
-        }
-    }*/
     return selected;
 }
 function pathHasDuplicateHop(pathToCheck, paths) {
@@ -40593,6 +40576,7 @@ function getLimitAmountSwapForPath(path, swapType) {
 class RouteProposer {
     constructor(config) {
         this.config = config;
+        this.graph = null;
         this.cache = {};
     }
     /**
@@ -40615,13 +40599,15 @@ class RouteProposer {
             poolsAllDict,
             (pool) => pool.address
         );
-        const graph = createGraph(poolsAllAddressDict);
+        if (this.graph === null) {
+            this.graph = createGraph(poolsAllAddressDict);
+        }
         let graphPaths = [];
         const isRelayerRoute = !!(
             poolsAllAddressDict[tokenIn] || poolsAllAddressDict[tokenOut]
         );
         findPaths(
-            graph,
+            this.graph,
             poolsAllAddressDict,
             tokenIn,
             tokenOut,
@@ -40647,41 +40633,6 @@ class RouteProposer {
                 pathCache
             );
         });
-        //console.log('paths', paths[0]);
-        /*const [poolsFilteredDict, hopTokens] = filterPoolsOfInterest(
-            poolsAllDict,
-            tokenIn,
-            tokenOut,
-            swapOptions.maxPools
-        );
-
-        const [, pathData] = filterHopPools(
-            tokenIn,
-            tokenOut,
-            hopTokens,
-            poolsFilteredDict,
-            poolsAllDict
-        );
-
-        const pathsUsingLinear: NewPath[] = getLinearStaBal3Paths(
-            tokenIn,
-            tokenOut,
-            poolsAllDict,
-            poolsFilteredDict,
-            this.config
-        );
-
-        const pathsUsingStaBal = getPathsUsingStaBalPool(
-            tokenIn,
-            tokenOut,
-            poolsAllDict,
-            poolsFilteredDict,
-            this.config
-        );
-
-        const combinedPathData = pathData
-            .concat(...pathsUsingLinear)
-            .concat(...pathsUsingStaBal);*/
         const [pathsWithLimits] = calculatePathLimits(paths, swapType);
         this.cache[`${tokenIn}${tokenOut}${swapType}${swapOptions.timestamp}`] =
             { paths: pathsWithLimits };
