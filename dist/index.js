@@ -40706,11 +40706,19 @@ class RouteProposer {
         this.graph = null;
         this.cache = {};
     }
+    initGraph(pools, timestamp) {
+        const poolsAllDict = parseToPoolsDict(pools, timestamp);
+        const poolsAllAddressDict = lodash.exports.mapKeys(
+            poolsAllDict,
+            (pool) => pool.address
+        );
+        this.graph = createGraph(poolsAllAddressDict);
+    }
     /**
      * Given a list of pools and a desired input/output, returns a set of possible paths to route through
      */
     getCandidatePaths(tokenIn, tokenOut, swapType, pools, swapOptions) {
-        if (pools.length === 0) return [];
+        if (pools.length === 0 || !this.graph) return [];
         // If token pair has been processed before that info can be reused to speed up execution
         const cache =
             this.cache[
@@ -40726,9 +40734,6 @@ class RouteProposer {
             poolsAllDict,
             (pool) => pool.address
         );
-        if (this.graph === null) {
-            this.graph = createGraph(poolsAllAddressDict);
-        }
         let graphPaths = [];
         const isRelayerRoute = !!(
             poolsAllAddressDict[tokenIn] || poolsAllAddressDict[tokenOut]
@@ -40867,7 +40872,15 @@ class SOR {
      */
     fetchPools() {
         return __awaiter(this, void 0, void 0, function* () {
-            return this.poolCacher.fetchPools();
+            const success = yield this.poolCacher.fetchPools();
+            //initialize the graph it is hasn't been yet
+            if (success && this.routeProposer.graph === null) {
+                this.routeProposer.initGraph(
+                    this.getPools(),
+                    this.defaultSwapOptions.timestamp
+                );
+            }
+            return success;
         });
     }
     /**
