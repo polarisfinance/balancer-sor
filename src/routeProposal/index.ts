@@ -25,6 +25,16 @@ export class RouteProposer {
 
     constructor(private readonly config: SorConfig) {}
 
+    initGraph(pools: SubgraphPoolBase[], timestamp: number) {
+        const poolsAllDict = parseToPoolsDict(pools, timestamp);
+        const poolsAllAddressDict = mapKeys(
+            poolsAllDict,
+            (pool) => pool.address
+        );
+
+        this.graph = createGraph(poolsAllAddressDict);
+    }
+
     /**
      * Given a list of pools and a desired input/output, returns a set of possible paths to route through
      */
@@ -35,7 +45,7 @@ export class RouteProposer {
         pools: SubgraphPoolBase[],
         swapOptions: SwapOptions
     ): NewPath[] {
-        if (pools.length === 0) return [];
+        if (pools.length === 0 || !this.graph) return [];
 
         // If token pair has been processed before that info can be reused to speed up execution
         const cache =
@@ -54,10 +64,6 @@ export class RouteProposer {
             poolsAllDict,
             (pool) => pool.address
         );
-
-        if (this.graph === null) {
-            this.graph = createGraph(poolsAllAddressDict);
-        }
 
         let graphPaths: PathSegment[][] = [];
         const isRelayerRoute = !!(
