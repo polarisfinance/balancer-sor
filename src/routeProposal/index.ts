@@ -81,7 +81,7 @@ export class RouteProposer {
             tokenOut,
             [tokenIn],
             1,
-            3,
+            2,
             isRelayerRoute,
             (foundPaths) => {
                 graphPaths = [...graphPaths, ...foundPaths];
