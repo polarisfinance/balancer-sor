@@ -40591,7 +40591,7 @@ class RouteProposer {
      * Given a list of pools and a desired input/output, returns a set of possible paths to route through
      */
     getCandidatePaths(tokenIn, tokenOut, swapType, pools, swapOptions) {
-        if (pools.length === 0 || !this.graph) return [];
+        if (pools.length === 0) return [];
         // If token pair has been processed before that info can be reused to speed up execution
         const cache =
             this.cache[
@@ -40607,6 +40607,9 @@ class RouteProposer {
             poolsAllDict,
             (pool) => pool.address
         );
+        if (this.graph === null) {
+            this.graph = createGraph(poolsAllAddressDict);
+        }
         let graphPaths = [];
         const isRelayerRoute = !!(
             poolsAllAddressDict[tokenIn] || poolsAllAddressDict[tokenOut]
@@ -40618,7 +40621,7 @@ class RouteProposer {
             tokenOut,
             [tokenIn],
             1,
-            2,
+            3,
             isRelayerRoute,
             (foundPaths) => {
                 graphPaths = [...graphPaths, ...foundPaths];

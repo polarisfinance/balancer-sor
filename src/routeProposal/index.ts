@@ -45,7 +45,7 @@ export class RouteProposer {
         pools: SubgraphPoolBase[],
         swapOptions: SwapOptions
     ): NewPath[] {
-        if (pools.length === 0 || !this.graph) return [];
+        if (pools.length === 0) return [];
 
         // If token pair has been processed before that info can be reused to speed up execution
         const cache =
@@ -65,6 +65,10 @@ export class RouteProposer {
             (pool) => pool.address
         );
 
+        if (this.graph === null) {
+            this.graph = createGraph(poolsAllAddressDict);
+        }
+
         let graphPaths: PathSegment[][] = [];
         const isRelayerRoute = !!(
             poolsAllAddressDict[tokenIn] || poolsAllAddressDict[tokenOut]
@@ -77,7 +81,7 @@ export class RouteProposer {
             tokenOut,
             [tokenIn],
             1,
-            2,
+            3,
             isRelayerRoute,
             (foundPaths) => {
                 graphPaths = [...graphPaths, ...foundPaths];
