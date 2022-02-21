@@ -89,6 +89,7 @@ interface SubgraphPoolBase {
     lowerTarget?: string;
     upperTarget?: string;
     totalLiquidity?: string;
+    factory?: string;
 }
 declare type SubgraphToken = {
     address: string;

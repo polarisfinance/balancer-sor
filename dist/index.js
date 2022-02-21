@@ -40552,6 +40552,7 @@ function createPath(tokens, pools, allPools, pathCache) {
         //nested linearPools arrive here with tI or tO mapped to the main token
         //we expand the path to accommodate the additional swaps needed for a nested linear pool
         const nestedLinearPools = getNestedLinearPoolsMap(pools[i], allPools);
+        //TODO: if a hop token is a nested BPT (linear of stable phantom), we don't need to unwind it, we can just use the BPT
         if (nestedLinearPools[tI] || nestedLinearPools[tO]) {
             const result = createNestedSwapPath(
                 tI,
