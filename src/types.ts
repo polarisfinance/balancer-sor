@@ -95,6 +95,7 @@ export interface SubgraphPoolBase {
     upperTarget?: string;
 
     totalLiquidity?: string;
+    factory?: string;
 }
 
 export type SubgraphToken = {
