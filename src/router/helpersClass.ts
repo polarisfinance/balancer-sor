@@ -303,6 +303,11 @@ export function EVMgetOutputAmountSwap(
     swapType: SwapTypes,
     amount: OldBigNumber
 ): OldBigNumber {
+    //we recalculate the pool pair data since it balance updates are not reflected immediately in cached poolPairData
+    poolPairData = pool.parsePoolPairData(
+        poolPairData.tokenIn,
+        poolPairData.tokenOut
+    );
     const { balanceIn, balanceOut, tokenIn, tokenOut } = poolPairData;
 
     let returnAmount: OldBigNumber;
