@@ -372,12 +372,16 @@ export function EVMgetOutputAmountSwap(
             throw Error('Unsupported swap');
         }
     }
+
+    const amountIn = SwapTypes.SwapExactIn ? amount : returnAmount;
+    const amountOut = SwapTypes.SwapExactIn ? returnAmount : amount;
+
     // Update balances of tokenIn and tokenOut
     pool.updateTokenBalanceForPool(
         tokenIn,
         balanceIn.add(
             parseFixed(
-                returnAmount.dp(poolPairData.decimalsIn).toString(),
+                amountIn.dp(poolPairData.decimalsIn).toString(),
                 poolPairData.decimalsIn
             )
         )
@@ -386,7 +390,7 @@ export function EVMgetOutputAmountSwap(
         tokenOut,
         balanceOut.sub(
             parseFixed(
-                amount.dp(poolPairData.decimalsOut).toString(),
+                amountOut.dp(poolPairData.decimalsOut).toString(),
                 poolPairData.decimalsOut
             )
         )
