@@ -37289,6 +37289,11 @@ function getDerivativeSpotPriceAfterSwap(pool, poolPairData, swapType, amount) {
 // We need do pass 'pools' here because this function has to update the pools state
 // in case a pool is used twice in two different paths
 function EVMgetOutputAmountSwap(pool, poolPairData, swapType, amount) {
+    //we recalculate the pool pair data since it balance updates are not reflected immediately in cached poolPairData
+    poolPairData = pool.parsePoolPairData(
+        poolPairData.tokenIn,
+        poolPairData.tokenOut
+    );
     const { balanceIn, balanceOut, tokenIn, tokenOut } = poolPairData;
     let returnAmount;
     if (swapType === exports.SwapTypes.SwapExactIn) {
