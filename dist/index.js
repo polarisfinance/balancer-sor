@@ -37289,7 +37289,7 @@ function getDerivativeSpotPriceAfterSwap(pool, poolPairData, swapType, amount) {
 // We need do pass 'pools' here because this function has to update the pools state
 // in case a pool is used twice in two different paths
 function EVMgetOutputAmountSwap(pool, poolPairData, swapType, amount) {
-    //we recalculate the pool pair data since it balance updates are not reflected immediately in cached poolPairData
+    //we recalculate the pool pair data since balance updates are not reflected immediately in cached poolPairData
     poolPairData = pool.parsePoolPairData(
         poolPairData.tokenIn,
         poolPairData.tokenOut
@@ -37356,12 +37356,14 @@ function EVMgetOutputAmountSwap(pool, poolPairData, swapType, amount) {
             throw Error('Unsupported swap');
         }
     }
+    const amountIn = exports.SwapTypes.SwapExactIn ? amount : returnAmount;
+    const amountOut = exports.SwapTypes.SwapExactIn ? returnAmount : amount;
     // Update balances of tokenIn and tokenOut
     pool.updateTokenBalanceForPool(
         tokenIn,
         balanceIn.add(
             bignumber.parseFixed(
-                returnAmount.dp(poolPairData.decimalsIn).toString(),
+                amountIn.dp(poolPairData.decimalsIn).toString(),
                 poolPairData.decimalsIn
             )
         )
@@ -37370,7 +37372,7 @@ function EVMgetOutputAmountSwap(pool, poolPairData, swapType, amount) {
         tokenOut,
         balanceOut.sub(
             bignumber.parseFixed(
-                amount.dp(poolPairData.decimalsOut).toString(),
+                amountOut.dp(poolPairData.decimalsOut).toString(),
                 poolPairData.decimalsOut
             )
         )
