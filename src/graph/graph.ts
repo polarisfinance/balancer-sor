@@ -12,6 +12,10 @@ import { MultiUndirectedGraph } from 'graphology';
 import { BigNumber as OldBigNumber } from '../utils/bignumber';
 import { LinearPool } from '../pools/linearPool/linearPool';
 
+const KNOWN_BOOSTED_POOLS = [
+    '0x64b301e21d640f9bef90458b0987d81fb4cf1b9e00020000000000000000022e',
+];
+
 export interface GraphEdgeData {
     poolId: string;
     poolAddress: string;
@@ -261,6 +265,7 @@ export function sortAndFilterPaths(
     });
 
     let seenPools: string[] = [];
+    let seenBoostedPools: string[] = [];
     const orderedPaths = _.orderBy(
         [...directPaths, ...filtered],
         [
@@ -272,25 +277,38 @@ export function sortAndFilterPaths(
             },
             (path) => {
                 const lastSegment = path[path.length - 1];
-                const segmentPoolIds = path.map((segment) => segment.poolId);
+                const pathPoolIds = path.map((segment) => segment.poolId);
 
-                if (_.intersection(seenPools, segmentPoolIds).length > 0) {
+                if (_.intersection(seenPools, pathPoolIds).length > 0) {
                     return lastSegment.limitAmountSwap.toNumber() * 0.75;
                 }
 
-                seenPools = [...seenPools, ...segmentPoolIds];
+                seenPools = [...seenPools, ...pathPoolIds];
 
                 return lastSegment.limitAmountSwap.toNumber();
             },
         ],
         ['desc', 'desc']
-    );
+    ).filter((path) => {
+        const boostedPoolIds: string[] = [];
+        //for the time being, filter out any duplicate instances of the same boosted pool
+        //until adequate liquidity or balance updating is properly supported
+        for (const segment of path) {
+            if (KNOWN_BOOSTED_POOLS.includes(segment.poolId)) {
+                if (seenBoostedPools.includes(segment.poolId)) {
+                    return false;
+                }
 
-    // tokenIn -> hopToken -> tokenOut
-    // tokenIn -> tokenOut
+                boostedPoolIds.push(segment.poolId);
+            }
+        }
 
-    //include all direct paths
-    //include the most liquid tokenIn/poolId -> hopToken -> tokenOut/poolId
+        if (boostedPoolIds.length > 0) {
+            seenBoostedPools = [...seenBoostedPools, ...boostedPoolIds];
+        }
+
+        return true;
+    });
 
     return orderedPaths.slice(0, 50);
 }
