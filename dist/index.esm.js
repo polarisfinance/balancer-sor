@@ -31949,6 +31949,8 @@ function createGraph(poolsMap) {
                             poolPair,
                             SwapTypes.SwapExactIn
                         ),
+                        normalizedLiquidity:
+                            pool.getNormalizedLiquidity(poolPair),
                     }
                 );
             }
@@ -31979,6 +31981,8 @@ function createGraph(poolsMap) {
                             poolPair,
                             SwapTypes.SwapExactIn
                         ),
+                        normalizedLiquidity:
+                            pool.getNormalizedLiquidity(poolPair),
                     }
                 );
             }
@@ -32085,27 +32089,50 @@ function expandPath(graph, allPools, isRelayerRoute, path) {
     });
 }
 function sortAndFilterPaths(paths, options) {
-    const sortedPaths = _.orderBy(
-        paths,
-        [
-            (path) =>
-                _.sumBy(path, (segment) => segment.limitAmountSwap.toNumber()) /
-                path.length,
-        ],
-        ['desc']
-    );
-    const selected = [];
-    for (const path of sortedPaths) {
-        //remove any path that has a matching tokenIn -> poolId -> tokenOut as another path in the list
-        /*if (pathHasDuplicateHop(path, selected)) {
-            continue;
-        }*/
-        if (options.maxPools === 1 && path.length > 1) {
-            continue;
-        }
-        selected.push(path);
+    const directPaths = paths.filter((path) => path.length === 1);
+    const hopPaths = paths.filter((path) => path.length > 1);
+    if (options.maxPools === 1) {
+        return directPaths;
     }
-    return selected.slice(0, 150);
+    //group by the hopToken-poolId of the last hop
+    const grouped = _.groupBy(hopPaths, (path) => {
+        const lastSegment = path[path.length - 1];
+        return `${lastSegment.tokenIn}-${lastSegment.poolId}`;
+    });
+    //select the path with the most liquid first hop from each group
+    const filtered = _.map(grouped, (paths) => {
+        return _.orderBy(
+            paths,
+            (path) => path[0].normalizedLiquidity.toNumber(),
+            ['desc']
+        )[0];
+    });
+    let seenPools = [];
+    const orderedPaths = _.orderBy(
+        [...directPaths, ...filtered],
+        [
+            //first order all by the normalized liquidity of the last segment
+            (path) => {
+                const lastSegment = path[path.length - 1];
+                return lastSegment.normalizedLiquidity.toNumber();
+            },
+            (path) => {
+                const lastSegment = path[path.length - 1];
+                const segmentPoolIds = path.map((segment) => segment.poolId);
+                if (_.intersection(seenPools, segmentPoolIds).length > 0) {
+                    return lastSegment.limitAmountSwap.toNumber() * 0.75;
+                }
+                seenPools = [...seenPools, ...segmentPoolIds];
+                return lastSegment.limitAmountSwap.toNumber();
+            },
+        ],
+        ['desc', 'desc']
+    );
+    // tokenIn -> hopToken -> tokenOut
+    // tokenIn -> tokenOut
+    //include all direct paths
+    //include the most liquid tokenIn/poolId -> hopToken -> tokenOut/poolId
+    return orderedPaths.slice(0, 50);
 }
 function getPoolPairDataCacheKey(poolPairData, swapType) {
     return `${poolPairData.tokenIn}-${poolPairData.tokenOut}-${swapType}`;
@@ -37245,8 +37272,9 @@ function EVMgetOutputAmountSwap(pool, poolPairData, swapType, amount) {
             throw Error('Unsupported swap');
         }
     }
-    const amountIn = SwapTypes.SwapExactIn ? amount : returnAmount;
-    const amountOut = SwapTypes.SwapExactIn ? returnAmount : amount;
+    const amountIn = swapType === SwapTypes.SwapExactIn ? amount : returnAmount;
+    const amountOut =
+        swapType === SwapTypes.SwapExactIn ? returnAmount : amount;
     // Update balances of tokenIn and tokenOut
     pool.updateTokenBalanceForPool(
         tokenIn,
