@@ -16,6 +16,7 @@ export interface GraphEdgeData {
     poolId: string;
     poolAddress: string;
     limitAmountSwap: OldBigNumber;
+    normalizedLiquidity: OldBigNumber;
     poolPair: PoolPairBase;
 }
 
@@ -62,6 +63,8 @@ export function createGraph(
                             poolPair,
                             SwapTypes.SwapExactIn
                         ),
+                        normalizedLiquidity:
+                            pool.getNormalizedLiquidity(poolPair),
                     }
                 );
             }
@@ -96,6 +99,8 @@ export function createGraph(
                             poolPair,
                             SwapTypes.SwapExactIn
                         ),
+                        normalizedLiquidity:
+                            pool.getNormalizedLiquidity(poolPair),
                     }
                 );
             }
@@ -232,32 +237,62 @@ export function sortAndFilterPaths(
     paths: PathSegment[][],
     options: SwapOptions
 ): PathSegment[][] {
-    const sortedPaths = _.orderBy(
-        paths,
-        [
-            (path) =>
-                _.sumBy(path, (segment) => segment.limitAmountSwap.toNumber()) /
-                path.length,
-        ],
-        ['desc']
-    );
+    const directPaths = paths.filter((path) => path.length === 1);
+    const hopPaths = paths.filter((path) => path.length > 1);
 
-    const selected: PathSegment[][] = [];
-
-    for (const path of sortedPaths) {
-        //remove any path that has a matching tokenIn -> poolId -> tokenOut as another path in the list
-        /*if (pathHasDuplicateHop(path, selected)) {
-            continue;
-        }*/
-
-        if (options.maxPools === 1 && path.length > 1) {
-            continue;
-        }
-
-        selected.push(path);
+    if (options.maxPools === 1) {
+        return directPaths;
     }
 
-    return selected.slice(0, 150);
+    //group by the hopToken-poolId of the last hop
+    const grouped = _.groupBy(hopPaths, (path) => {
+        const lastSegment = path[path.length - 1];
+
+        return `${lastSegment.tokenIn}-${lastSegment.poolId}`;
+    });
+
+    //select the path with the most liquid first hop from each group
+    const filtered = _.map(grouped, (paths) => {
+        return _.orderBy(
+            paths,
+            (path) => path[0].normalizedLiquidity.toNumber(),
+            ['desc']
+        )[0];
+    });
+
+    let seenPools: string[] = [];
+    const orderedPaths = _.orderBy(
+        [...directPaths, ...filtered],
+        [
+            //first order all by the normalized liquidity of the last segment
+            (path) => {
+                const lastSegment = path[path.length - 1];
+
+                return lastSegment.normalizedLiquidity.toNumber();
+            },
+            (path) => {
+                const lastSegment = path[path.length - 1];
+                const segmentPoolIds = path.map((segment) => segment.poolId);
+
+                if (_.intersection(seenPools, segmentPoolIds).length > 0) {
+                    return lastSegment.limitAmountSwap.toNumber() * 0.75;
+                }
+
+                seenPools = [...seenPools, ...segmentPoolIds];
+
+                return lastSegment.limitAmountSwap.toNumber();
+            },
+        ],
+        ['desc', 'desc']
+    );
+
+    // tokenIn -> hopToken -> tokenOut
+    // tokenIn -> tokenOut
+
+    //include all direct paths
+    //include the most liquid tokenIn/poolId -> hopToken -> tokenOut/poolId
+
+    return orderedPaths.slice(0, 50);
 }
 
 function pathHasDuplicateHop(
