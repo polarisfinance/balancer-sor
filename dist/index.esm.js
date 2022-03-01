@@ -31918,6 +31918,9 @@ Graph.InvalidArgumentsGraphError = InvalidArgumentsGraphError;
 Graph.NotFoundGraphError = NotFoundGraphError;
 Graph.UsageGraphError = UsageGraphError;
 
+const KNOWN_BOOSTED_POOLS = [
+    '0x64b301e21d640f9bef90458b0987d81fb4cf1b9e00020000000000000000022e',
+];
 function createGraph(poolsMap) {
     const pools = Object.values(poolsMap);
     const graph = new MultiUndirectedGraph();
@@ -32108,6 +32111,7 @@ function sortAndFilterPaths(paths, options) {
         )[0];
     });
     let seenPools = [];
+    let seenBoostedPools = [];
     const orderedPaths = _.orderBy(
         [...directPaths, ...filtered],
         [
@@ -32118,20 +32122,32 @@ function sortAndFilterPaths(paths, options) {
             },
             (path) => {
                 const lastSegment = path[path.length - 1];
-                const segmentPoolIds = path.map((segment) => segment.poolId);
-                if (_.intersection(seenPools, segmentPoolIds).length > 0) {
+                const pathPoolIds = path.map((segment) => segment.poolId);
+                if (_.intersection(seenPools, pathPoolIds).length > 0) {
                     return lastSegment.limitAmountSwap.toNumber() * 0.75;
                 }
-                seenPools = [...seenPools, ...segmentPoolIds];
+                seenPools = [...seenPools, ...pathPoolIds];
                 return lastSegment.limitAmountSwap.toNumber();
             },
         ],
         ['desc', 'desc']
-    );
-    // tokenIn -> hopToken -> tokenOut
-    // tokenIn -> tokenOut
-    //include all direct paths
-    //include the most liquid tokenIn/poolId -> hopToken -> tokenOut/poolId
+    ).filter((path) => {
+        const boostedPoolIds = [];
+        //for the time being, filter out any duplicate instances of the same boosted pool
+        //until adequate liquidity or balance updating is properly supported
+        for (const segment of path) {
+            if (KNOWN_BOOSTED_POOLS.includes(segment.poolId)) {
+                if (seenBoostedPools.includes(segment.poolId)) {
+                    return false;
+                }
+                boostedPoolIds.push(segment.poolId);
+            }
+        }
+        if (boostedPoolIds.length > 0) {
+            seenBoostedPools = [...seenBoostedPools, ...boostedPoolIds];
+        }
+        return true;
+    });
     return orderedPaths.slice(0, 50);
 }
 function getPoolPairDataCacheKey(poolPairData, swapType) {
