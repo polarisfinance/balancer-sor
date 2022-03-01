@@ -303,7 +303,7 @@ export function EVMgetOutputAmountSwap(
     swapType: SwapTypes,
     amount: OldBigNumber
 ): OldBigNumber {
-    //we recalculate the pool pair data since it balance updates are not reflected immediately in cached poolPairData
+    //we recalculate the pool pair data since balance updates are not reflected immediately in cached poolPairData
     poolPairData = pool.parsePoolPairData(
         poolPairData.tokenIn,
         poolPairData.tokenOut
@@ -373,8 +373,9 @@ export function EVMgetOutputAmountSwap(
         }
     }
 
-    const amountIn = SwapTypes.SwapExactIn ? amount : returnAmount;
-    const amountOut = SwapTypes.SwapExactIn ? returnAmount : amount;
+    const amountIn = swapType === SwapTypes.SwapExactIn ? amount : returnAmount;
+    const amountOut =
+        swapType === SwapTypes.SwapExactIn ? returnAmount : amount;
 
     // Update balances of tokenIn and tokenOut
     pool.updateTokenBalanceForPool(
