@@ -31920,6 +31920,7 @@ Graph.UsageGraphError = UsageGraphError;
 
 const KNOWN_BOOSTED_POOLS = [
     '0x64b301e21d640f9bef90458b0987d81fb4cf1b9e00020000000000000000022e',
+    '0x5ddb92a5340fd0ead3987d3661afcd6104c3b757000000000000000000000187',
 ];
 function createGraph(poolsMap) {
     const pools = Object.values(poolsMap);
@@ -32115,22 +32116,25 @@ function sortAndFilterPaths(paths, options) {
     const orderedPaths = _.orderBy(
         [...directPaths, ...filtered],
         [
-            //first order all by the normalized liquidity of the last segment
-            (path) => {
-                const lastSegment = path[path.length - 1];
-                return lastSegment.normalizedLiquidity.toNumber();
-            },
             (path) => {
                 const lastSegment = path[path.length - 1];
                 const pathPoolIds = path.map((segment) => segment.poolId);
+                //TODO: this needs to be monitored, make sure it doesn't create bad paths
+                //give the boosted pools a bit of a push up so they get a better chance to be considered
+                if (
+                    _.intersection(KNOWN_BOOSTED_POOLS, pathPoolIds).length > 0
+                ) {
+                    return lastSegment.normalizedLiquidity.toNumber() * 5;
+                }
+                //apply at 25% penalty if one of the pools has already been seen
                 if (_.intersection(seenPools, pathPoolIds).length > 0) {
-                    return lastSegment.limitAmountSwap.toNumber() * 0.75;
+                    return lastSegment.normalizedLiquidity.toNumber() * 0.75;
                 }
                 seenPools = [...seenPools, ...pathPoolIds];
-                return lastSegment.limitAmountSwap.toNumber();
+                return lastSegment.normalizedLiquidity.toNumber();
             },
         ],
-        ['desc', 'desc']
+        ['desc']
     ).filter((path) => {
         const boostedPoolIds = [];
         //for the time being, filter out any duplicate instances of the same boosted pool
