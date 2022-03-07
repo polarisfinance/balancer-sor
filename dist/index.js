@@ -31937,6 +31937,10 @@ function createGraph(poolsMap) {
         const mainTokens = Object.keys(map);
         for (let i = 0; i < mainTokens.length - 1; i++) {
             for (let j = i + 1; j < mainTokens.length; j++) {
+                //don't include linear pools in the path
+                if (pool.poolType === exports.PoolTypes.Linear) {
+                    continue;
+                }
                 const poolPair = pool.parsePoolPairData(
                     map[mainTokens[i]],
                     map[mainTokens[j]]
