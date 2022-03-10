@@ -357,7 +357,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
 
             const amt = _calcMainOutPerWrappedIn(
                 amtScaled.toBigInt(),
@@ -389,7 +389,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
 
             const amt = _calcWrappedOutPerMainIn(
                 amtScaled.toBigInt(),
@@ -421,7 +421,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
 
             const amt = _calcBptOutPerMainIn(
                 amtScaled.toBigInt(),
@@ -455,7 +455,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
 
             const amt = _calcMainOutPerBptIn(
                 amtScaled.toBigInt(),
@@ -489,7 +489,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtNoRate = parseFixed(amount.toString(), 18)
+            const amtNoRate = this._scaleAmountTo18(amount)
                 .mul(ONE)
                 .div(poolPairData.rate);
 
@@ -525,7 +525,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
 
             const amt = _calcWrappedOutPerBptIn(
                 amtScaled.toBigInt(),
@@ -586,7 +586,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
 
             const amt = _calcWrappedInPerMainOut(
                 amtScaled.toBigInt(),
@@ -618,7 +618,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
 
             const amt = _calcMainInPerWrappedOut(
                 amtScaled.toBigInt(),
@@ -650,7 +650,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
             // in = main
             // out = BPT
             const amt = _calcMainInPerBptOut(
@@ -685,7 +685,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
 
             const amt = _calcBptInPerMainOut(
                 amtScaled.toBigInt(),
@@ -720,7 +720,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
 
             const amt = _calcWrappedInPerBptOut(
                 amtScaled.toBigInt(),
@@ -758,7 +758,7 @@ export class LinearPool implements PoolBase {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtNoRate = parseFixed(amount.toString(), 18)
+            const amtNoRate = this._scaleAmountTo18(amount)
                 .mul(ONE)
                 .div(poolPairData.rate);
 
@@ -950,6 +950,16 @@ export class LinearPool implements PoolBase {
         return _derivativeSpotPriceAfterSwapBPTInForExactTokenOut(
             amount,
             poolPairData
+        );
+    }
+
+    _scaleAmountTo18(amount: OldBigNumber): BigNumber {
+        return parseFixed(
+            amount.toFormat(18, {
+                groupSeparator: '',
+                decimalSeparator: '.',
+            }),
+            18
         );
     }
 }
