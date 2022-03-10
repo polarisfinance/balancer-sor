@@ -34745,7 +34745,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
             const amt = _calcMainOutPerWrappedIn(
                 amtScaled.toBigInt(),
                 poolPairData.mainBalanceScaled.toBigInt(),
@@ -34772,7 +34772,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
             const amt = _calcWrappedOutPerMainIn(
                 amtScaled.toBigInt(),
                 poolPairData.mainBalanceScaled.toBigInt(),
@@ -34799,7 +34799,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
             const amt = _calcBptOutPerMainIn(
                 amtScaled.toBigInt(),
                 poolPairData.mainBalanceScaled.toBigInt(),
@@ -34828,7 +34828,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
             const amt = _calcMainOutPerBptIn(
                 amtScaled.toBigInt(),
                 poolPairData.mainBalanceScaled.toBigInt(),
@@ -34857,7 +34857,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtNoRate = parseFixed(amount.toString(), 18)
+            const amtNoRate = this._scaleAmountTo18(amount)
                 .mul(WeiPerEther)
                 .div(poolPairData.rate);
             const amt = _calcBptOutPerWrappedIn(
@@ -34888,7 +34888,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
             const amt = _calcWrappedOutPerBptIn(
                 amtScaled.toBigInt(),
                 poolPairData.mainBalanceScaled.toBigInt(),
@@ -34939,7 +34939,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
             const amt = _calcWrappedInPerMainOut(
                 amtScaled.toBigInt(),
                 poolPairData.mainBalanceScaled.toBigInt(),
@@ -34966,7 +34966,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
             const amt = _calcMainInPerWrappedOut(
                 amtScaled.toBigInt(),
                 poolPairData.mainBalanceScaled.toBigInt(),
@@ -34993,7 +34993,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
             // in = main
             // out = BPT
             const amt = _calcMainInPerBptOut(
@@ -35024,7 +35024,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
             const amt = _calcBptInPerMainOut(
                 amtScaled.toBigInt(),
                 poolPairData.mainBalanceScaled.toBigInt(),
@@ -35054,7 +35054,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtScaled = parseFixed(amount.toString(), 18);
+            const amtScaled = this._scaleAmountTo18(amount);
             const amt = _calcWrappedInPerBptOut(
                 amtScaled.toBigInt(),
                 poolPairData.mainBalanceScaled.toBigInt(),
@@ -35086,7 +35086,7 @@ class LinearPool {
         try {
             // All values should use 1e18 fixed point
             // i.e. 1USDC => 1e18 not 1e6
-            const amtNoRate = parseFixed(amount.toString(), 18)
+            const amtNoRate = this._scaleAmountTo18(amount)
                 .mul(WeiPerEther)
                 .div(poolPairData.rate);
             const amt = _calcBptInPerWrappedOut(
@@ -35202,6 +35202,15 @@ class LinearPool {
     }
     _derivativeSpotPriceAfterSwapBPTInForExactTokenOut(poolPairData, amount) {
         return _derivativeSpotPriceAfterSwapBPTInForExactTokenOut$1();
+    }
+    _scaleAmountTo18(amount) {
+        return parseFixed(
+            amount.toFormat(18, {
+                groupSeparator: '',
+                decimalSeparator: '.',
+            }),
+            18
+        );
     }
 }
 
