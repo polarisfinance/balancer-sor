@@ -88,7 +88,7 @@ export class RouteProposer {
             }
         );
 
-        if (graphPaths.length === 0) {
+        if (graphPaths.length < 3) {
             findPaths(
                 this.graph,
                 poolsAllAddressDict,
