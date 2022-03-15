@@ -21,6 +21,7 @@ const KNOWN_BOOSTED_POOLS = [
     '0x3b998ba87b11a1c5bc1770de9793b17a0da61561000000000000000000000185',
     '0x64b301e21d640f9bef90458b0987d81fb4cf1b9e00020000000000000000022e',
     '0x71959b131426fdb7af01de8d7d4149ccaf09f8cc0000000000000000000002e7',
+    '0x31adc46737ebb8e0e4a391ec6c26438badaee8ca000000000000000000000306',
 ];
 
 export interface GraphEdgeData {
@@ -228,7 +229,20 @@ function expandPath(
             return false;
         }
 
-        if (!isRelayerRoute) {
+        if (isRelayerRoute) {
+            //for relayer routes, we're only concerned with paths that go exclusively through phantom pools
+            return (
+                path.filter((segment) => {
+                    const pool = allPools[segment.poolAddress];
+
+                    return (
+                        pool.poolType === PoolTypes.Linear ||
+                        (pool.poolType === PoolTypes.MetaStable &&
+                            pool.tokensList.includes(segment.poolAddress))
+                    );
+                }).length === path.length
+            );
+        } else {
             //if a pool in the path contains the bpt of another pool, the same pool appears twice in the path
             for (let i = 0; i < path.length - 1; i++) {
                 const pool = allPools[path[i].poolAddress];
