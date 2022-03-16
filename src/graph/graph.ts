@@ -22,6 +22,7 @@ const KNOWN_BOOSTED_POOLS = [
     '0x64b301e21d640f9bef90458b0987d81fb4cf1b9e00020000000000000000022e',
     '0x71959b131426fdb7af01de8d7d4149ccaf09f8cc0000000000000000000002e7',
     '0x31adc46737ebb8e0e4a391ec6c26438badaee8ca000000000000000000000306',
+    '0x1e2576344d49779bdbb71b1b76193d27e6f996b700020000000000000000032d',
 ];
 
 export interface GraphEdgeData {
@@ -339,7 +340,16 @@ export function sortAndFilterPaths(
         return true;
     });
 
-    return orderedPaths.slice(0, 50);
+    return orderedPaths
+        .filter(
+            (path) =>
+                !path.find(
+                    (segment) =>
+                        segment.poolId ===
+                        '0xcf9d4940fe4c194c83d4d3b1de4c2dff4233f612000200000000000000000253'
+                )
+        )
+        .slice(0, 50);
 }
 
 function pathHasDuplicateHop(
