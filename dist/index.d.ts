@@ -19,7 +19,6 @@ interface SorConfig {
         id: string;
         usdc: string;
     };
-    boostedPools?: string[];
 }
 declare type NoNullableField<T> = {
     [P in keyof T]: NonNullable<T[P]>;
@@ -47,6 +46,7 @@ interface SwapOptions {
     maxPools: number;
     poolTypeFilter: PoolFilter;
     forceRefresh: boolean;
+    boostedPools?: string[];
 }
 declare type PoolPairBase = {
     id: string;

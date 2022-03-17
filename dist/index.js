@@ -32104,7 +32104,7 @@ function expandPath(graph, allPools, isRelayerRoute, path) {
         return true;
     });
 }
-function sortAndFilterPaths(paths, options, boostedPools) {
+function sortAndFilterPaths(paths, options) {
     const directPaths = paths.filter((path) => path.length === 1);
     const hopPaths = paths.filter((path) => path.length > 1);
     if (options.maxPools === 1) {
@@ -32133,7 +32133,10 @@ function sortAndFilterPaths(paths, options, boostedPools) {
                 const pathPoolIds = path.map((segment) => segment.poolId);
                 //TODO: this needs to be monitored, make sure it doesn't create bad paths
                 //give the boosted pools a bit of a push up so they get a better chance to be considered
-                if (_.intersection(boostedPools, pathPoolIds).length > 0) {
+                if (
+                    _.intersection(options.boostedPools || [], pathPoolIds)
+                        .length > 0
+                ) {
                     return lastSegment.normalizedLiquidity.toNumber() * 5;
                 }
                 //apply at 25% penalty if one of the pools has already been seen
@@ -32150,7 +32153,7 @@ function sortAndFilterPaths(paths, options, boostedPools) {
         //for the time being, filter out any duplicate instances of the same boosted pool
         //until adequate liquidity or balance updating is properly supported
         for (const segment of path) {
-            if (boostedPools.includes(segment.poolId)) {
+            if ((options.boostedPools || []).includes(segment.poolId)) {
                 if (seenBoostedPools.includes(segment.poolId)) {
                     return false;
                 }
@@ -40880,11 +40883,7 @@ class RouteProposer {
                 }
             );
         }
-        const sortedPaths = sortAndFilterPaths(
-            graphPaths,
-            swapOptions,
-            this.config.boostedPools || []
-        );
+        const sortedPaths = sortAndFilterPaths(graphPaths, swapOptions);
         const pathCache = {};
         const paths = sortedPaths.map((path) => {
             const tokens = [
