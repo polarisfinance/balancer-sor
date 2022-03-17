@@ -253,8 +253,7 @@ function expandPath(
 
 export function sortAndFilterPaths(
     paths: PathSegment[][],
-    options: SwapOptions,
-    boostedPools: string[]
+    options: SwapOptions
 ): PathSegment[][] {
     const directPaths = paths.filter((path) => path.length === 1);
     const hopPaths = paths.filter((path) => path.length > 1);
@@ -290,7 +289,10 @@ export function sortAndFilterPaths(
 
                 //TODO: this needs to be monitored, make sure it doesn't create bad paths
                 //give the boosted pools a bit of a push up so they get a better chance to be considered
-                if (_.intersection(boostedPools, pathPoolIds).length > 0) {
+                if (
+                    _.intersection(options.boostedPools || [], pathPoolIds)
+                        .length > 0
+                ) {
                     return lastSegment.normalizedLiquidity.toNumber() * 5;
                 }
 
@@ -310,7 +312,7 @@ export function sortAndFilterPaths(
         //for the time being, filter out any duplicate instances of the same boosted pool
         //until adequate liquidity or balance updating is properly supported
         for (const segment of path) {
-            if (boostedPools.includes(segment.poolId)) {
+            if ((options.boostedPools || []).includes(segment.poolId)) {
                 if (seenBoostedPools.includes(segment.poolId)) {
                     return false;
                 }
