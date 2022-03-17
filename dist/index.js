@@ -31918,18 +31918,6 @@ Graph.InvalidArgumentsGraphError = InvalidArgumentsGraphError;
 Graph.NotFoundGraphError = NotFoundGraphError;
 Graph.UsageGraphError = UsageGraphError;
 
-const KNOWN_BOOSTED_POOLS = [
-    '0x64b301e21d640f9bef90458b0987d81fb4cf1b9e00020000000000000000022e',
-    '0x5ddb92a5340fd0ead3987d3661afcd6104c3b757000000000000000000000187',
-    '0x56897add6dc6abccf0ada1eb83d936818bc6ca4d0002000000000000000002e8',
-    '0x10441785a928040b456a179691141c48356eb3a50001000000000000000002fa',
-    '0x2ff1552dd09f87d6774229ee5eca60cf570ae291000000000000000000000186',
-    '0x3b998ba87b11a1c5bc1770de9793b17a0da61561000000000000000000000185',
-    '0x64b301e21d640f9bef90458b0987d81fb4cf1b9e00020000000000000000022e',
-    '0x71959b131426fdb7af01de8d7d4149ccaf09f8cc0000000000000000000002e7',
-    '0x31adc46737ebb8e0e4a391ec6c26438badaee8ca000000000000000000000306',
-    '0x1e2576344d49779bdbb71b1b76193d27e6f996b700020000000000000000032d',
-];
 function createGraph(poolsMap) {
     const pools = Object.values(poolsMap);
     const graph = new MultiUndirectedGraph();
@@ -32116,7 +32104,7 @@ function expandPath(graph, allPools, isRelayerRoute, path) {
         return true;
     });
 }
-function sortAndFilterPaths(paths, options) {
+function sortAndFilterPaths(paths, options, boostedPools) {
     const directPaths = paths.filter((path) => path.length === 1);
     const hopPaths = paths.filter((path) => path.length > 1);
     if (options.maxPools === 1) {
@@ -32145,9 +32133,7 @@ function sortAndFilterPaths(paths, options) {
                 const pathPoolIds = path.map((segment) => segment.poolId);
                 //TODO: this needs to be monitored, make sure it doesn't create bad paths
                 //give the boosted pools a bit of a push up so they get a better chance to be considered
-                if (
-                    _.intersection(KNOWN_BOOSTED_POOLS, pathPoolIds).length > 0
-                ) {
+                if (_.intersection(boostedPools, pathPoolIds).length > 0) {
                     return lastSegment.normalizedLiquidity.toNumber() * 5;
                 }
                 //apply at 25% penalty if one of the pools has already been seen
@@ -32164,7 +32150,7 @@ function sortAndFilterPaths(paths, options) {
         //for the time being, filter out any duplicate instances of the same boosted pool
         //until adequate liquidity or balance updating is properly supported
         for (const segment of path) {
-            if (KNOWN_BOOSTED_POOLS.includes(segment.poolId)) {
+            if (boostedPools.includes(segment.poolId)) {
                 if (seenBoostedPools.includes(segment.poolId)) {
                     return false;
                 }
@@ -40894,7 +40880,11 @@ class RouteProposer {
                 }
             );
         }
-        const sortedPaths = sortAndFilterPaths(graphPaths, swapOptions);
+        const sortedPaths = sortAndFilterPaths(
+            graphPaths,
+            swapOptions,
+            this.config.boostedPools || []
+        );
         const pathCache = {};
         const paths = sortedPaths.map((path) => {
             const tokens = [

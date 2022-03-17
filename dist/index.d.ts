@@ -19,6 +19,7 @@ interface SorConfig {
         id: string;
         usdc: string;
     };
+    boostedPools?: string[];
 }
 declare type NoNullableField<T> = {
     [P in keyof T]: NonNullable<T[P]>;
