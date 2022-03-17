@@ -32165,16 +32165,7 @@ function sortAndFilterPaths(paths, options) {
         }
         return true;
     });
-    return orderedPaths
-        .filter(
-            (path) =>
-                !path.find(
-                    (segment) =>
-                        segment.poolId ===
-                        '0xcf9d4940fe4c194c83d4d3b1de4c2dff4233f612000200000000000000000253'
-                )
-        )
-        .slice(0, 50);
+    return orderedPaths.slice(0, 50);
 }
 function getPoolPairDataCacheKey(poolPairData, swapType) {
     return `${poolPairData.tokenIn}-${poolPairData.tokenOut}-${swapType}`;
