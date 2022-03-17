@@ -104,7 +104,11 @@ export class RouteProposer {
             );
         }
 
-        const sortedPaths = sortAndFilterPaths(graphPaths, swapOptions);
+        const sortedPaths = sortAndFilterPaths(
+            graphPaths,
+            swapOptions,
+            this.config.boostedPools || []
+        );
 
         const pathCache: {
             [key: string]: { swaps: Swap[]; pairData: PoolPairBase[] };
