@@ -33,6 +33,8 @@ export class RouteProposer {
         );
 
         this.graph = createGraph(poolsAllAddressDict);
+        //clear the cache
+        this.cache = {};
     }
 
     /**

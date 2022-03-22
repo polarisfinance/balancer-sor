@@ -83,6 +83,16 @@ export class SOR {
     }
 
     /**
+     * reloadGraph Reloads the route graph to reflect more recent pool data
+     */
+    reloadGraph() {
+        this.routeProposer.initGraph(
+            this.getPools(),
+            this.defaultSwapOptions.timestamp
+        );
+    }
+
+    /**
      * getSwaps Retrieve information for best swap tokenIn>tokenOut.
      * @param {string} tokenIn - Address of tokenIn.
      * @param {string} tokenOut - Address of tokenOut.
