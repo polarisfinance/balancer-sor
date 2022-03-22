@@ -40818,6 +40818,8 @@ class RouteProposer {
             (pool) => pool.address
         );
         this.graph = createGraph(poolsAllAddressDict);
+        //clear the cache
+        this.cache = {};
     }
     /**
      * Given a list of pools and a desired input/output, returns a set of possible paths to route through
@@ -41005,6 +41007,15 @@ class SOR {
             }
             return success;
         });
+    }
+    /**
+     * reloadGraph Reloads the route graph to reflect more recent pool data
+     */
+    reloadGraph() {
+        this.routeProposer.initGraph(
+            this.getPools(),
+            this.defaultSwapOptions.timestamp
+        );
     }
     /**
      * getSwaps Retrieve information for best swap tokenIn>tokenOut.

@@ -270,6 +270,10 @@ declare class SOR {
      */
     fetchPools(): Promise<boolean>;
     /**
+     * reloadGraph Reloads the route graph to reflect more recent pool data
+     */
+    reloadGraph(): void;
+    /**
      * getSwaps Retrieve information for best swap tokenIn>tokenOut.
      * @param {string} tokenIn - Address of tokenIn.
      * @param {string} tokenOut - Address of tokenOut.
