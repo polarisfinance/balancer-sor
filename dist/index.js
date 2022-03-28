@@ -32124,7 +32124,6 @@ function sortAndFilterPaths(paths, options) {
         )[0];
     });
     let seenPools = [];
-    let seenBoostedPools = [];
     const orderedPaths = _.orderBy(
         [...directPaths, ...filtered],
         [
@@ -32148,23 +32147,7 @@ function sortAndFilterPaths(paths, options) {
             },
         ],
         ['desc']
-    ).filter((path) => {
-        const boostedPoolIds = [];
-        //for the time being, filter out any duplicate instances of the same boosted pool
-        //until adequate liquidity or balance updating is properly supported
-        for (const segment of path) {
-            if ((options.boostedPools || []).includes(segment.poolId)) {
-                if (seenBoostedPools.includes(segment.poolId)) {
-                    return false;
-                }
-                boostedPoolIds.push(segment.poolId);
-            }
-        }
-        if (boostedPoolIds.length > 0) {
-            seenBoostedPools = [...seenBoostedPools, ...boostedPoolIds];
-        }
-        return true;
-    });
+    );
     return orderedPaths.slice(0, 50);
 }
 function getPoolPairDataCacheKey(poolPairData, swapType) {
@@ -34776,10 +34759,12 @@ class LinearPool {
         return value;
     }
     // Updates the balance of a given token for the pool
-    updateTokenBalanceForPool(token, newBalance) {
+    updateTokenBalanceForPool(token, newBalanceScaled) {
         const T = this.tokens.find((t) => isSameAddress(t.address, token));
         if (!T) throw Error('Pool does not contain this token');
-        T.balance = newBalance.toString();
+        T.balance = bignumber
+            .formatFixed(newBalanceScaled, T.decimals)
+            .toString();
     }
     _exactTokenInForTokenOut(poolPairData, amount) {
         if (poolPairData.pairType === PairTypes$1.MainTokenToBpt) {
