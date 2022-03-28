@@ -279,7 +279,6 @@ export function sortAndFilterPaths(
     });
 
     let seenPools: string[] = [];
-    let seenBoostedPools: string[] = [];
     const orderedPaths = _.orderBy(
         [...directPaths, ...filtered],
         [
@@ -307,26 +306,7 @@ export function sortAndFilterPaths(
             },
         ],
         ['desc']
-    ).filter((path) => {
-        const boostedPoolIds: string[] = [];
-        //for the time being, filter out any duplicate instances of the same boosted pool
-        //until adequate liquidity or balance updating is properly supported
-        for (const segment of path) {
-            if ((options.boostedPools || []).includes(segment.poolId)) {
-                if (seenBoostedPools.includes(segment.poolId)) {
-                    return false;
-                }
-
-                boostedPoolIds.push(segment.poolId);
-            }
-        }
-
-        if (boostedPoolIds.length > 0) {
-            seenBoostedPools = [...seenBoostedPools, ...boostedPoolIds];
-        }
-
-        return true;
-    });
+    );
 
     return orderedPaths.slice(0, 50);
 }
