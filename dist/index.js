@@ -32148,7 +32148,15 @@ function sortAndFilterPaths(paths, options) {
         ],
         ['desc']
     );
-    return orderedPaths.slice(0, 50);
+    const uniquePaths = _.uniqBy(orderedPaths, (path) =>
+        path
+            .map(
+                (segment) =>
+                    `${segment.poolId}-${segment.tokenIn}-${segment.tokenOut}`
+            )
+            .join()
+    );
+    return uniquePaths.slice(0, 50);
 }
 function getPoolPairDataCacheKey(poolPairData, swapType) {
     return `${poolPairData.tokenIn}-${poolPairData.tokenOut}-${swapType}`;
