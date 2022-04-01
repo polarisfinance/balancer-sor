@@ -40692,16 +40692,15 @@ class RouteProposer {
     getCandidatePaths(tokenIn, tokenOut, swapType, pools, swapOptions) {
         if (pools.length === 0) return [];
         // If token pair has been processed before that info can be reused to speed up execution
-        /*const cache =
+        const cache =
             this.cache[
                 `${tokenIn}${tokenOut}${swapType}${swapOptions.timestamp}`
             ];
-
         // forceRefresh can be set to force fresh processing of paths/prices
         if (!swapOptions.forceRefresh && !!cache) {
             // Using pre-processed data from cache
             return cache.paths;
-        }*/
+        }
         const poolsAllDict = parseToPoolsDict(pools, swapOptions.timestamp);
         const poolsAllAddressDict = lodash.exports.mapKeys(
             poolsAllDict,
@@ -40757,8 +40756,8 @@ class RouteProposer {
             );
         });
         const [pathsWithLimits] = calculatePathLimits(paths, swapType);
-        /*this.cache[`${tokenIn}${tokenOut}${swapType}${swapOptions.timestamp}`] =
-            { paths: pathsWithLimits };*/
+        this.cache[`${tokenIn}${tokenOut}${swapType}${swapOptions.timestamp}`] =
+            { paths: pathsWithLimits };
         return pathsWithLimits;
     }
 }
