@@ -50,7 +50,7 @@ export class RouteProposer {
         if (pools.length === 0) return [];
 
         // If token pair has been processed before that info can be reused to speed up execution
-        /*const cache =
+        const cache =
             this.cache[
                 `${tokenIn}${tokenOut}${swapType}${swapOptions.timestamp}`
             ];
@@ -59,7 +59,7 @@ export class RouteProposer {
         if (!swapOptions.forceRefresh && !!cache) {
             // Using pre-processed data from cache
             return cache.paths;
-        }*/
+        }
 
         const poolsAllDict = parseToPoolsDict(pools, swapOptions.timestamp);
         const poolsAllAddressDict = mapKeys(
@@ -128,8 +128,8 @@ export class RouteProposer {
 
         const [pathsWithLimits] = calculatePathLimits(paths, swapType);
 
-        /*this.cache[`${tokenIn}${tokenOut}${swapType}${swapOptions.timestamp}`] =
-            { paths: pathsWithLimits };*/
+        this.cache[`${tokenIn}${tokenOut}${swapType}${swapOptions.timestamp}`] =
+            { paths: pathsWithLimits };
 
         return pathsWithLimits;
     }
