@@ -15,9 +15,11 @@ import { LinearPool } from '../pools/linearPool/linearPool';
 export interface GraphEdgeData {
     poolId: string;
     poolAddress: string;
-    limitAmountSwap: OldBigNumber;
     normalizedLiquidity: OldBigNumber;
     poolPair: PoolPairBase;
+    reversePoolPair: PoolPairBase;
+    reverseNormalizedLiquidity: OldBigNumber;
+    pool: PoolBase;
 }
 
 export interface PathSegment extends GraphEdgeData {
@@ -42,7 +44,9 @@ export function createGraph(
 
     for (const pool of pools) {
         const map = getMainTokenToPoolTokenMap(pool, poolsMap);
-        const mainTokens = Object.keys(map);
+        //we sort the main tokens to ensure that the order is always the same across all pools
+        //this is specifically important for instances where linear pool bpts are being mapped down
+        const mainTokens = Object.keys(map).sort();
 
         for (let i = 0; i < mainTokens.length - 1; i++) {
             for (let j = i + 1; j < mainTokens.length; j++) {
@@ -56,6 +60,11 @@ export function createGraph(
                     map[mainTokens[j]]
                 );
 
+                const reversePoolPair = pool.parsePoolPairData(
+                    map[mainTokens[j]],
+                    map[mainTokens[i]]
+                );
+
                 graph.addUndirectedEdgeWithKey(
                     `${pool.id}-${mainTokens[i]}-${mainTokens[j]}`,
                     mainTokens[i],
@@ -64,12 +73,12 @@ export function createGraph(
                         poolId: pool.id,
                         poolAddress: pool.address,
                         poolPair,
-                        limitAmountSwap: pool.getLimitAmountSwap(
-                            poolPair,
-                            SwapTypes.SwapExactIn
-                        ),
                         normalizedLiquidity:
                             pool.getNormalizedLiquidity(poolPair),
+                        reversePoolPair,
+                        reverseNormalizedLiquidity:
+                            pool.getNormalizedLiquidity(reversePoolPair),
+                        pool,
                     }
                 );
             }
@@ -92,6 +101,11 @@ export function createGraph(
                     tokens[i]
                 );
 
+                const reversePoolPair = pool.parsePoolPairData(
+                    tokens[i],
+                    pool.address
+                );
+
                 graph.addUndirectedEdgeWithKey(
                     `${pool.id}-${pool.address}-${tokens[i]}}`,
                     pool.address,
@@ -100,12 +114,12 @@ export function createGraph(
                         poolId: pool.id,
                         poolAddress: pool.address,
                         poolPair,
-                        limitAmountSwap: pool.getLimitAmountSwap(
-                            poolPair,
-                            SwapTypes.SwapExactIn
-                        ),
                         normalizedLiquidity:
                             pool.getNormalizedLiquidity(poolPair),
+                        reversePoolPair,
+                        reverseNormalizedLiquidity:
+                            pool.getNormalizedLiquidity(reversePoolPair),
+                        pool,
                     }
                 );
             }
@@ -253,6 +267,7 @@ function expandPath(
 
 export function sortAndFilterPaths(
     paths: PathSegment[][],
+    poolsMap: PoolAddressDictionary,
     options: SwapOptions
 ): PathSegment[][] {
     const directPaths = paths.filter((path) => path.length === 1);
@@ -273,7 +288,15 @@ export function sortAndFilterPaths(
     const filtered = _.map(grouped, (paths) => {
         return _.orderBy(
             paths,
-            (path) => path[0].normalizedLiquidity.toNumber(),
+            (path) => {
+                const map = getMainTokenToPoolTokenMap(path[0].pool, poolsMap);
+
+                //getNormalizedLiquidity is calculated in tokenOut, so for consistency
+                //we pass the tokenIn as the tokenOut since path[0].tokenIn will always be the same
+                return map[path[0].tokenIn] === path[0].poolPair.tokenOut
+                    ? path[0].normalizedLiquidity.toNumber()
+                    : path[0].reverseNormalizedLiquidity.toNumber();
+            },
             ['desc']
         )[0];
     });
@@ -285,6 +308,14 @@ export function sortAndFilterPaths(
             (path) => {
                 const lastSegment = path[path.length - 1];
                 const pathPoolIds = path.map((segment) => segment.poolId);
+                const map = getMainTokenToPoolTokenMap(
+                    lastSegment.pool,
+                    poolsMap
+                );
+                const normalizedLiquidity =
+                    map[lastSegment.tokenIn] === lastSegment.poolPair.tokenIn
+                        ? lastSegment.normalizedLiquidity.toNumber()
+                        : lastSegment.reverseNormalizedLiquidity.toNumber();
 
                 //TODO: this needs to be monitored, make sure it doesn't create bad paths
                 //give the boosted pools a bit of a push up so they get a better chance to be considered
@@ -292,17 +323,17 @@ export function sortAndFilterPaths(
                     _.intersection(options.boostedPools || [], pathPoolIds)
                         .length > 0
                 ) {
-                    return lastSegment.normalizedLiquidity.toNumber() * 5;
+                    return normalizedLiquidity * 5;
                 }
 
                 //apply at 25% penalty if one of the pools has already been seen
                 if (_.intersection(seenPools, pathPoolIds).length > 0) {
-                    return lastSegment.normalizedLiquidity.toNumber() * 0.75;
+                    return normalizedLiquidity * 0.75;
                 }
 
                 seenPools = [...seenPools, ...pathPoolIds];
 
-                return lastSegment.normalizedLiquidity.toNumber();
+                return normalizedLiquidity;
             },
         ],
         ['desc']
