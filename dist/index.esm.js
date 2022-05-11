@@ -40784,6 +40784,22 @@ class RouteProposer {
                             '0x6da14f5acd58dd5c8e486cfa1dc1c550f5c61c1c0000000000000000000003cf'
                     ).length === 0
             );
+        } else if (
+            tokenIn.toLowerCase() ===
+            '0x6da14f5acd58dd5c8e486cfa1dc1c550f5c61c1c'
+        ) {
+            sortedPaths = sortedPaths.filter((path) => {
+                if (path.length > 1) {
+                    return false;
+                }
+                if (
+                    path[0].poolId !==
+                    '0x6da14f5acd58dd5c8e486cfa1dc1c550f5c61c1c0000000000000000000003cf'
+                ) {
+                    return false;
+                }
+                return true;
+            });
         }
         const pathCache = {};
         const paths = sortedPaths.map((path) => {
