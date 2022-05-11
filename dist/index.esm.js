@@ -40772,21 +40772,6 @@ class RouteProposer {
             swapOptions
         );
         if (
-            tokenIn.toLowerCase() !==
-                '0x6da14f5acd58dd5c8e486cfa1dc1c550f5c61c1c' &&
-            tokenOut.toLowerCase() !==
-                '0x846e4d51d7e2043c1a87e0ab7490b93fb940357b'
-        ) {
-            //don't include 4 pool
-            sortedPaths = sortedPaths.filter(
-                (path) =>
-                    path.filter(
-                        (segment) =>
-                            segment.poolId ===
-                            '0x6da14f5acd58dd5c8e486cfa1dc1c550f5c61c1c0000000000000000000003cf'
-                    ).length === 0
-            );
-        } else if (
             tokenIn.toLowerCase() ===
             '0x6da14f5acd58dd5c8e486cfa1dc1c550f5c61c1c'
         ) {
@@ -40802,6 +40787,19 @@ class RouteProposer {
                 }
                 return true;
             });
+        } else if (
+            tokenOut.toLowerCase() !==
+            '0x846e4d51d7e2043c1a87e0ab7490b93fb940357b'
+        ) {
+            //don't include 4 pool
+            sortedPaths = sortedPaths.filter(
+                (path) =>
+                    path.filter(
+                        (segment) =>
+                            segment.poolId ===
+                            '0x6da14f5acd58dd5c8e486cfa1dc1c550f5c61c1c0000000000000000000003cf'
+                    ).length === 0
+            );
         }
         const pathCache = {};
         const paths = sortedPaths.map((path) => {
