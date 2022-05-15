@@ -40801,6 +40801,20 @@ class RouteProposer {
                     ).length === 0
             );
         }
+        if (
+            tokenIn.toLowerCase() !==
+            '0xDE12c7959E1a72bbe8a5f7A1dc8f8EeF9Ab011B3'.toLowerCase()
+        ) {
+            //don't include dei boosted
+            sortedPaths = sortedPaths.filter(
+                (path) =>
+                    path.filter(
+                        (segment) =>
+                            segment.poolId ===
+                            '0xdfc65c1f15ad3507754ef0fd4ba67060c108db7e000000000000000000000406'
+                    ).length === 0
+            );
+        }
         const pathCache = {};
         const paths = sortedPaths.map((path) => {
             const tokens = [
