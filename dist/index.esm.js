@@ -32101,7 +32101,7 @@ function expandPath(graph, allPools, isRelayerRoute, path) {
             //if a pool in the path contains the bpt of another pool, the same pool appears twice in the path
             for (let i = 0; i < path.length - 1; i++) {
                 const pool = allPools[path[i].poolAddress];
-                for (let j = i + 1; j < path.length; j++) {
+                for (let j = i + 1; j < path.length - 1; j++) {
                     const otherPool = allPools[path[j].poolAddress];
                     if (pool.tokensList.includes(otherPool.address)) {
                         return false;
@@ -40766,41 +40766,11 @@ class RouteProposer {
                 }
             );
         }
-        let sortedPaths = sortAndFilterPaths(
+        const sortedPaths = sortAndFilterPaths(
             graphPaths,
             poolsAllAddressDict,
             swapOptions
         );
-        if (
-            tokenIn.toLowerCase() ===
-            '0x6da14f5acd58dd5c8e486cfa1dc1c550f5c61c1c'
-        ) {
-            sortedPaths = sortedPaths.filter((path) => {
-                if (path.length > 1) {
-                    return false;
-                }
-                if (
-                    path[0].poolId !==
-                    '0x6da14f5acd58dd5c8e486cfa1dc1c550f5c61c1c0000000000000000000003cf'
-                ) {
-                    return false;
-                }
-                return true;
-            });
-        } else if (
-            tokenOut.toLowerCase() !==
-            '0x846e4d51d7e2043c1a87e0ab7490b93fb940357b'
-        ) {
-            //don't include 4 pool
-            sortedPaths = sortedPaths.filter(
-                (path) =>
-                    path.filter(
-                        (segment) =>
-                            segment.poolId ===
-                            '0x6da14f5acd58dd5c8e486cfa1dc1c550f5c61c1c0000000000000000000003cf'
-                    ).length === 0
-            );
-        }
         const pathCache = {};
         const paths = sortedPaths.map((path) => {
             const tokens = [

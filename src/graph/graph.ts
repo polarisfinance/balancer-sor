@@ -249,7 +249,7 @@ function expandPath(
             for (let i = 0; i < path.length - 1; i++) {
                 const pool = allPools[path[i].poolAddress];
 
-                for (let j = i + 1; j < path.length; j++) {
+                for (let j = i + 1; j < path.length - 1; j++) {
                     const otherPool = allPools[path[j].poolAddress];
 
                     if (pool.tokensList.includes(otherPool.address)) {
