@@ -40907,7 +40907,10 @@ class RouteProposer {
             ];
             return createPath(
                 tokens,
-                path.map((segment) => poolsAllDict[segment.poolId]),
+                path
+                    //TODO: look into why this is possible
+                    .filter((segment) => poolsAllDict[segment.poolId])
+                    .map((segment) => poolsAllDict[segment.poolId]),
                 poolsAllAddressDict,
                 pathCache
             );
