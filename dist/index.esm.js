@@ -40437,7 +40437,6 @@ function formatSwaps(
     returnAmountConsideringFees,
     marketSp
 ) {
-    console.log('inside format swaps, num swaps:', swapsOriginal.length);
     if (swapsOriginal.length === 0) {
         return cloneDeep(EMPTY_SWAPINFO);
     }
@@ -40922,7 +40921,6 @@ class SOR {
      */
     getSwaps(tokenIn, tokenOut, swapType, swapAmount, swapOptions) {
         return __awaiter(this, void 0, void 0, function* () {
-            console.log('getSwaps', tokenIn, tokenOut);
             if (!this.poolCacher.finishedFetching)
                 return cloneDeep(EMPTY_SWAPINFO);
             // Set any unset options to their defaults
@@ -40935,7 +40933,6 @@ class SOR {
                 pools,
                 options.poolTypeFilter
             );
-            console.log('num filtered pools', filteredPools.length);
             const wrappedInfo = yield getWrappedInfo(
                 this.provider,
                 swapType,
@@ -40944,7 +40941,6 @@ class SOR {
                 this.config,
                 BigNumber$1.from(swapAmount)
             );
-            console.log('wrappedInfo', wrappedInfo);
             let swapInfo;
             if (isLidoStableSwap(this.config.chainId, tokenIn, tokenOut)) {
                 swapInfo = yield getLidoStaticSwaps(
@@ -40957,7 +40953,6 @@ class SOR {
                     this.provider
                 );
             } else {
-                console.log('calling process swaps');
                 swapInfo = yield this.processSwaps(
                     wrappedInfo.tokenIn.addressForSwaps,
                     wrappedInfo.tokenOut.addressForSwaps,
@@ -40999,7 +40994,6 @@ class SOR {
     // Will process swap/pools data and return best swaps
     processSwaps(tokenIn, tokenOut, swapType, swapAmount, pools, swapOptions) {
         return __awaiter(this, void 0, void 0, function* () {
-            console.log('inside process swaps num pools', pools.length);
             if (pools.length === 0) return cloneDeep(EMPTY_SWAPINFO);
             const paths = this.routeProposer.getCandidatePaths(
                 tokenIn,
@@ -41008,9 +41002,7 @@ class SOR {
                 pools,
                 swapOptions
             );
-            console.log('inside process swaps num paths', paths.length);
             if (paths.length == 0) return cloneDeep(EMPTY_SWAPINFO);
-            console.log('inside process swaps after');
             // Path is guaranteed to contain both tokenIn and tokenOut
             let tokenInDecimals;
             let tokenOutDecimals;
