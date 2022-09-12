@@ -15043,6 +15043,7 @@ const EMPTY_SWAPINFO = {
     returnAmountConsideringFees: constants.Zero,
     returnAmountFromSwaps: constants.Zero,
     marketSp: constants.Zero.toString(),
+    routes: [],
 };
 
 const Lido = {

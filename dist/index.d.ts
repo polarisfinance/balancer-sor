@@ -98,6 +98,7 @@ interface SubgraphPoolBase {
     sqrtAlpha?: string;
     sqrtBeta?: string;
     root3Alpha?: string;
+    factory?: string;
 }
 declare type SubgraphToken = {
     address: string;

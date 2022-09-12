@@ -14872,6 +14872,7 @@ const EMPTY_SWAPINFO = {
     returnAmountConsideringFees: Zero,
     returnAmountFromSwaps: Zero,
     marketSp: Zero.toString(),
+    routes: [],
 };
 
 const Lido = {
