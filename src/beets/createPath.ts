@@ -1,12 +1,7 @@
-import {
-    NewPath,
-    PoolAddressDictionary,
-    PoolBase,
-    PoolPairBase,
-    Swap,
-} from '../types';
+import { NewPath, PoolBase, PoolPairBase, Swap } from '../types';
 import { Zero } from '@ethersproject/constants';
 import { createNestedSwapPath, getNestedLinearPoolsMap } from './graph';
+import { PoolAddressDictionary } from './types';
 
 // Creates a path with pools.length hops
 // i.e. tokens[0]>[Pool0]>tokens[1]>[Pool1]>tokens[2]>[Pool2]>tokens[3]
