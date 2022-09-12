@@ -98,6 +98,8 @@ export interface SubgraphPoolBase {
 
     // Gyro3 specific field
     root3Alpha?: string;
+
+    factory?: string;
 }
 
 export type SubgraphToken = {
