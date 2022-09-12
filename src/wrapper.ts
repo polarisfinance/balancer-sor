@@ -6,7 +6,7 @@ import { getBestPaths } from './router';
 import { getWrappedInfo, setWrappedInfo } from './wrapInfo';
 import { formatSwaps } from './formatSwaps';
 import { PoolCacher } from './poolCacher';
-import { RouteProposer } from './routeProposal';
+import { RouteProposer } from './beets/routeProposal';
 import { filterPoolsByType } from './routeProposal/filtering';
 import { SwapCostCalculator } from './swapCostCalculator';
 import { getLidoStaticSwaps, isLidoStableSwap } from './pools/lido';

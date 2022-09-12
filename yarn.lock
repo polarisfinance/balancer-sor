@@ -2687,6 +2687,11 @@ event-target-shim@^5.0.0:
   resolved "https://registry.yarnpkg.com/event-target-shim/-/event-target-shim-5.0.1.tgz#5d4d3ebdf9583d63a5333ce2deb7480ab2b05789"
   integrity sha512-i/2XbnSz/uxRCU6+NdVJgKWDTM427+MqYbkQzD321DuCQJUqOuJKIA0IM2+W2xtYHdKOmZ4dR6fExsd4SXL+WQ==
 
+events@^3.3.0:
+  version "3.3.0"
+  resolved "https://registry.yarnpkg.com/events/-/events-3.3.0.tgz#31a95ad0a924e2d2c419a813aeb2c4e878ea7400"
+  integrity sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==
+
 evp_bytestokey@^1.0.3:
   version "1.0.3"
   resolved "https://registry.yarnpkg.com/evp_bytestokey/-/evp_bytestokey-1.0.3.tgz#7fcbdb198dc71959432efe13842684e0525acb02"
@@ -3054,6 +3059,19 @@ graceful-fs@^4.1.2, graceful-fs@^4.1.6, graceful-fs@^4.1.9:
   version "4.2.10"
   resolved "https://registry.yarnpkg.com/graceful-fs/-/graceful-fs-4.2.10.tgz#147d3a006da4ca3ce14728c7aefc287c367d7a6c"
   integrity sha512-9ByhssR2fPVsNZj478qUUbKfmL0+t5BDVyjShtyZZLiK7ZDAArFFfopyOTj0M05wE2tJPisA4iTnnXl2YoPvOA==
+
+graphology-types@^0.24.4:
+  version "0.24.4"
+  resolved "https://registry.yarnpkg.com/graphology-types/-/graphology-types-0.24.4.tgz#299120fb50dcd7915204068715e7cfc9ef8b5e3c"
+  integrity sha512-CSgmycWiviCctMFO86YoUTJN1t4/PLKC5Pos2Hite+7kCUXTr+mGlDUAOgpcKG1IfFaeL9VDmTjFpzs2rTnPWw==
+
+graphology@^0.24.1:
+  version "0.24.1"
+  resolved "https://registry.yarnpkg.com/graphology/-/graphology-0.24.1.tgz#035e452e294b01168cf5c85d5dd0a4b7e4837d87"
+  integrity sha512-6lNz1PNTAe9Q6ioHKrXu0Lp047sgvOoHa4qmP/8mnJWCGv2iIZPQkuHPUb2/OWDWCqHpw2hKgJLJ55X/66xmHg==
+  dependencies:
+    events "^3.3.0"
+    obliterator "^2.0.2"
 
 graphql-request@^3.4.0:
   version "3.7.0"
@@ -4172,7 +4190,7 @@ object-inspect@^1.9.0:
   resolved "https://registry.yarnpkg.com/object-inspect/-/object-inspect-1.12.2.tgz#c0641f26394532f28ab8d796ab954e43c009a8ea"
   integrity sha512-z+cPxW0QGUp0mcqcsgQyLVRDoXFQbXOwBaqyF7VIgI4TWNQsDHrBpUQslRmIfAoYWdYzs6UlKJtB2XJpTaNSpQ==
 
-obliterator@^2.0.0:
+obliterator@^2.0.0, obliterator@^2.0.2:
   version "2.0.4"
   resolved "https://registry.yarnpkg.com/obliterator/-/obliterator-2.0.4.tgz#fa650e019b2d075d745e44f1effeb13a2adbe816"
   integrity sha512-lgHwxlxV1qIg1Eap7LgIeoBWIMFibOjbrYPIPJZcI1mmGAI2m3lNYpK12Y+GBdPQ0U1hRwSord7GIaawz962qQ==
