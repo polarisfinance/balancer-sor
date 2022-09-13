@@ -69,7 +69,27 @@ export class SOR {
      * @returns {boolean} True if pools fetched successfully, False if not.
      */
     async fetchPools(): Promise<boolean> {
-        return this.poolCacher.fetchPools();
+        const success = await this.poolCacher.fetchPools();
+
+        //initialize the graph it is hasn't been yet
+        if (success && this.routeProposer.graph === null) {
+            this.routeProposer.initGraph(
+                this.getPools(),
+                this.defaultSwapOptions.timestamp
+            );
+        }
+
+        return success;
+    }
+
+    /**
+     * reloadGraph Reloads the route graph to reflect more recent pool data
+     */
+    reloadGraph() {
+        this.routeProposer.initGraph(
+            this.getPools(),
+            this.defaultSwapOptions.timestamp
+        );
     }
 
     /**
