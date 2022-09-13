@@ -36527,8 +36527,25 @@ class SOR {
      */
     fetchPools() {
         return __awaiter(this, void 0, void 0, function* () {
-            return this.poolCacher.fetchPools();
+            const success = yield this.poolCacher.fetchPools();
+            //initialize the graph it is hasn't been yet
+            if (success && this.routeProposer.graph === null) {
+                this.routeProposer.initGraph(
+                    this.getPools(),
+                    this.defaultSwapOptions.timestamp
+                );
+            }
+            return success;
         });
+    }
+    /**
+     * reloadGraph Reloads the route graph to reflect more recent pool data
+     */
+    reloadGraph() {
+        this.routeProposer.initGraph(
+            this.getPools(),
+            this.defaultSwapOptions.timestamp
+        );
     }
     /**
      * getSwaps Retrieve information for best swap tokenIn>tokenOut.
