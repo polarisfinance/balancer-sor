@@ -3,12 +3,12 @@ import cloneDeep from 'lodash.clonedeep';
 import { bnum, scale } from './utils/bignumber';
 import { EMPTY_SWAPINFO } from './constants';
 import {
-    SwapTypes,
-    SwapV2,
     Swap,
     SwapInfo,
     SwapInfoRoute,
     SwapInfoRouteHop,
+    SwapTypes,
+    SwapV2,
 } from './types';
 import { Zero } from '@ethersproject/constants';
 
@@ -125,7 +125,7 @@ export function formatSwaps(
         swaps[0].amount = BigNumber.from(swaps[0].amount).add(dust).toString();
     }
 
-    const routes = formatRoutes(swapsOriginal, swapAmount);
+    const routes = formatRoutes(swapType, swapsOriginal, swapAmount);
 
     const swapInfo: SwapInfo = {
         swapAmount,
@@ -147,27 +147,35 @@ export function formatSwaps(
 /**
  * Formats a sequence of swaps to a format that is useful for displaying the routes in user interfaces.
  * @dev The swaps are converted to an array of routes, where each route has an array of hops
+ * @param swapType - exact in or exact out
  * @param routes - The original Swaps
  * @param swapAmount - The total amount being swapped
  * @returns SwapInfoRoute[] - The swaps formatted as routes with hops
  */
 function formatRoutes(
+    swapType: SwapTypes,
     routes: Swap[][],
     swapAmount: BigNumber
 ): SwapInfoRoute[] {
+    const exactIn = swapType === SwapTypes.SwapExactIn;
+
     return routes.map((swaps) => {
         const first = swaps[0];
         const last = swaps[swaps.length - 1];
+        const tokenInAmount =
+            (exactIn ? first.swapAmount : last.swapAmountOut) || '0';
+        const tokenOutAmount =
+            (exactIn ? last.swapAmountOut : first.swapAmount) || '0';
         const tokenInAmountScaled = scale(
-            bnum(first.swapAmount || '0'),
+            bnum(tokenInAmount),
             first.tokenInDecimals
         );
 
         return {
             tokenIn: first.tokenIn,
             tokenOut: last.tokenOut,
-            tokenInAmount: first.swapAmount || '0',
-            tokenOutAmount: last.swapAmountOut || '0',
+            tokenInAmount,
+            tokenOutAmount,
             share: tokenInAmountScaled
                 .div(bnum(swapAmount.toString()))
                 .toNumber(),
@@ -175,8 +183,10 @@ function formatRoutes(
                 return {
                     tokenIn: swap.tokenIn,
                     tokenOut: swap.tokenOut,
-                    tokenInAmount: swap.swapAmount || '0',
-                    tokenOutAmount: swap.swapAmountOut || '0',
+                    tokenInAmount:
+                        (exactIn ? swap.swapAmount : swap.swapAmountOut) || '0',
+                    tokenOutAmount:
+                        (exactIn ? swap.swapAmountOut : swap.swapAmount) || '0',
                     poolId: swap.pool,
                 };
             }),
