@@ -36,6 +36,7 @@ export const optimizeSwapAmounts = (
         swapType === SwapTypes.SwapExactIn ? INFINITY.times(-1) : INFINITY;
     let bestSwapAmounts: OldBigNumber[] = [];
     let bestPaths: NewPath[] = [];
+    // these are the limitAmounts always denominated in input decimals
     let swapAmounts = initialSwapAmounts.map((amount) =>
         bnum(formatFixed(amount, inputDecimals))
     );
@@ -387,6 +388,7 @@ function getBestPathIds(
             }
         });
 
+        // if this is triggered, it fails down the line since swapAmounts.length > exceedingAmounts.length
         if (bestPathIndex === -1) {
             return [[], []];
         }

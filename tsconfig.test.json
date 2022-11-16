@@ -1,18 +1,15 @@
 {
     "compilerOptions": {
-        "module": "commonjs",
-        "target": "es2016",
-        "declaration": true,
-        "lib": ["es2019", "es2018.promise"],
-        "outDir": "./dist/",
-        "baseUrl": "src",
         "esModuleInterop": true,
-        "moduleResolution": "node",
-        "resolveJsonModule": true,
+        "emitDecoratorMetadata": true,
         "experimentalDecorators": true,
-        // "strict": true,
-        "strictNullChecks": true,
-        "strictFunctionTypes": false
+        "lib": ["es2018"],
+        "module": "commonjs",
+        "strict": true,
+        "target": "es2018",
+        "resolveJsonModule": true,
+        "outDir": "./dist",
+        "skipLibCheck": true
     },
     "include": [
         "src",

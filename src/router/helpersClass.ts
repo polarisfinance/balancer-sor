@@ -22,6 +22,8 @@ export function getHighestLimitAmountsForPaths(
 ): BigNumber[] {
     if (paths.length === 0) return [];
     const limitAmounts: BigNumber[] = [];
+
+    // question: maxPools is the amount of swaps per path, but here it is used as the max amount of paths?
     for (let i = 0; i < maxPools; i++) {
         if (i < paths.length) {
             const limitAmount = paths[i].limitAmount;

@@ -19,6 +19,7 @@ export const getBestPaths = (
         return [[], ZERO, ZERO, ZERO];
     }
 
+    // note: this sums the limit for the paths, the first index has limit of the first path, the second index has the limit of first+second, etc. last has total limit of all paths
     // Before we start the main loop, we first check if there is enough liquidity for this totalSwapAmount
     const highestLimitAmounts = getHighestLimitAmountsForPaths(paths, maxPools);
     const sumLimitAmounts = highestLimitAmounts.reduce(
@@ -31,6 +32,7 @@ export const getBestPaths = (
 
     // If the cumulative limit across all paths is lower than totalSwapAmount then no solution is possible
     if (totalSwapAmount.gt(sumLimitAmounts[sumLimitAmounts.length - 1])) {
+        console.error(`ERROR: not enough liq!`);
         return [[], ZERO, ZERO, ZERO]; // Not enough liquidity, return empty
     }
 

@@ -201,8 +201,8 @@ export class SOR {
         if (paths.length == 0) return cloneDeep(EMPTY_SWAPINFO);
 
         // Path is guaranteed to contain both tokenIn and tokenOut
-        let tokenInDecimals;
-        let tokenOutDecimals;
+        let tokenInDecimals = 0;
+        let tokenOutDecimals = 0;
         paths[0].swaps.forEach((swap) => {
             // Inject token decimals to avoid having to query onchain
             if (isSameAddress(swap.tokenIn, tokenIn)) {
