@@ -41,6 +41,7 @@ export const optimizeSwapAmounts = (
         bnum(formatFixed(amount, inputDecimals))
     );
     for (let b = initialNumPaths; b <= paths.length; b++) {
+        console.log(`b=${b}`);
         if (b != initialNumPaths) {
             // We already had a previous iteration and are adding another pool this new iteration
             // swapAmounts.push(ONE); // Initialize new swapAmount with 1 wei to
@@ -147,6 +148,7 @@ const optimizePathDistribution = (
     initialSwapAmounts: OldBigNumber[],
     inputDecimals: number
 ): { paths: NewPath[]; swapAmounts: OldBigNumber[] } => {
+    console.log(`Find initial bestPathIds`);
     let [selectedPaths, exceedingAmounts] = getBestPathIds(
         allPaths,
         swapType,
@@ -177,7 +179,12 @@ const optimizePathDistribution = (
         newSelectedPaths.map(({ id }) => id).sort()
     );
 
+    let i = 0;
     while (!historyOfSortedPathIds.includes(sortedPathIdsJSON)) {
+        console.log(
+            `Round ${i} of optimizing paths and swapamounts for ${initialSwapAmounts.length} paths/swaps`
+        );
+        i++;
         // Local minima can result in infinite loops
         // We then maintain a log of the sorted paths ids which we have already considered to prevent getting stuck
         historyOfSortedPathIds.push(sortedPathIdsJSON);
@@ -197,7 +204,11 @@ const optimizePathDistribution = (
             inputDecimals
         );
 
-        if (newSelectedPaths.length === 0) break;
+        if (
+            newSelectedPaths.length === 0 ||
+            newSelectedPaths.length < swapAmounts.length // need to break if we did not find a bestPath for the newly optimized swapAmounts.
+        )
+            break;
 
         const pathIds = newSelectedPaths.map(({ id }) => id).sort();
         sortedPathIdsJSON = JSON.stringify(pathIds);
@@ -340,6 +351,7 @@ function getBestPathIds(
     swapAmounts: OldBigNumber[],
     inputDecimals: number
 ): [NewPath[], OldBigNumber[]] {
+    console.log(`Finding bestPathIds`);
     const selectedPaths: NewPath[] = [];
     const selectedPathExceedingAmounts: OldBigNumber[] = [];
     const paths = cloneDeep(originalPaths); // Deep copy to avoid changing the original path data
@@ -349,7 +361,7 @@ function getBestPathIds(
         return b.minus(a).toNumber();
     });
 
-    sortedSwapAmounts.forEach((swapAmount) => {
+    sortedSwapAmounts.forEach((swapAmount, i) => {
         // Find path that has best effective price
         let bestPathIndex = -1;
         let bestEffectivePrice = INFINITY; // Start with worst price possible
@@ -390,8 +402,14 @@ function getBestPathIds(
 
         // if this is triggered, it fails down the line since swapAmounts.length > exceedingAmounts.length
         if (bestPathIndex === -1) {
+            console.log(
+                `Did not find a best path for swapAmount index ${i}. swapAmount=${swapAmount}.`
+            );
             return [[], []];
         }
+        console.log(
+            `bestPathIndex=${bestPathIndex} for swapAmount index ${i}. swapAmount=${swapAmount}. pathLimitAmount=${paths[bestPathIndex].limitAmount}`
+        );
 
         selectedPaths.push(paths[bestPathIndex]);
         selectedPathExceedingAmounts.push(
@@ -480,6 +498,7 @@ function iterateSwapAmountsApproximation(
     // within "iterateSwapAmounts()". In this case swapAmounts should be considered viable
     // also if they are on the limit.
     swapAmounts.forEach((swapAmount, i) => {
+        console.log(`Optimizing swap amounts for selected path ${i}.`);
         // if (swapAmount.gt(ZERO) && exceedingAmounts[i].lt(ZERO)) {
         if (
             (iterationCount == 0 &&
@@ -602,6 +621,7 @@ function iterateSwapAmountsApproximation(
             }
         }
     }
+    console.log(`Optimized swapAmounts: ${swapAmounts}`);
 
     return [pricesForViableAmounts, swapAmounts, exceedingAmounts];
 }

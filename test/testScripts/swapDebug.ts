@@ -55,7 +55,7 @@ export async function swap(): Promise<void> {
     const provider = new JsonRpcProvider(PROVIDER_URLS[networkId]);
     // gasPrice is used by SOR as a factor to determine how many pools to swap against.
     // i.e. higher cost means more costly to trade against lots of different pools.
-    const gasPrice = BigNumber.from('10000000000');
+    const gasPrice = BigNumber.from('40000000000');
     // This determines the max no of pools the SOR will use to swap.
 
     // ERROR TypeError: Cannot read properties of undefined (reading 'lte')
@@ -63,7 +63,7 @@ export async function swap(): Promise<void> {
     const tokenIn = ADDRESSES[networkId].DEUS;
     const tokenOut = ADDRESSES[networkId].USDC;
     const swapType: SwapTypes = SwapTypes.SwapExactIn;
-    const swapAmount = parseFixed('20', 18);
+    const swapAmount = parseFixed('30', 18);
 
     // ERROR Not enough liquidity, although there is 200k mai
     // const maxPools = 8;
