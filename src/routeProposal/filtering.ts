@@ -179,7 +179,6 @@ export function getBoostedGraph(
     const phantomPools: PoolBase[] = [];
     const relevantRaisingTokens: string[] = [];
     // Here we add all linear pools, take note of phantom pools,
-    // add pools with tokenIn or tokenOut with weth,
     // add LBP pools with tokenIn or tokenOut and take note of the
     // corresponding raising tokens.
     for (const id in poolsAllDict) {
@@ -195,20 +194,6 @@ export function getBoostedGraph(
             );
             if (tokensList.includes(pool.address)) {
                 phantomPools.push(pool);
-            }
-            // adds pools having tokenIn or tokenOut with weth
-            if (
-                tokenIn != wethAddress &&
-                tokenOut != wethAddress &&
-                tokensList.includes(wethAddress)
-            ) {
-                if (
-                    tokensList.length <= 3 &&
-                    (tokensList.includes(tokenIn) ||
-                        tokensList.includes(tokenOut))
-                ) {
-                    graphPoolsSet.add(pool);
-                }
             }
             if (config.lbpRaisingTokens) {
                 const raisingTokens = config.lbpRaisingTokens.map((address) =>
@@ -236,6 +221,23 @@ export function getBoostedGraph(
                 }
             }
         }
+    }
+    // add highest liquidity pools with tokenIn and weth or tokenOut and weth
+    const bestTokenInToWeth = getHighestLiquidityPool(
+        tokenIn,
+        wethAddress,
+        poolsAllDict
+    );
+    if (bestTokenInToWeth) {
+        graphPoolsSet.add(poolsAllDict[bestTokenInToWeth]);
+    }
+    const bestWethToTokenOut = getHighestLiquidityPool(
+        wethAddress,
+        tokenOut,
+        poolsAllDict
+    );
+    if (bestWethToTokenOut) {
+        graphPoolsSet.add(poolsAllDict[bestWethToTokenOut]);
     }
     if (linearPools.length == 0) return {};
     const linearPoolsAddresses = linearPools.map((pool) => pool.address);

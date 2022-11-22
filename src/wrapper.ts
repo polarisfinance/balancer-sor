@@ -30,6 +30,7 @@ export class SOR {
     private readonly poolCacher: PoolCacher;
     public readonly routeProposer: RouteProposer;
     readonly swapCostCalculator: SwapCostCalculator;
+    private useBpt: boolean;
 
     private readonly defaultSwapOptions: SwapOptions = {
         gasPrice: parseFixed('50', 9),
@@ -60,8 +61,8 @@ export class SOR {
         );
     }
 
-    getPools(): SubgraphPoolBase[] {
-        return this.poolCacher.getPools();
+    getPools(useBpts?: boolean): SubgraphPoolBase[] {
+        return this.poolCacher.getPools(useBpts);
     }
 
     /**
@@ -98,14 +99,17 @@ export class SOR {
      * @param {string} tokenOut - Address of tokenOut.
      * @param {SwapTypes} swapType - SwapExactIn where the amount of tokens in (sent to the Pool) is known or SwapExactOut where the amount of tokens out (received from the Pool) is known.
      * @param {BigNumberish} swapAmount - Either amountIn or amountOut depending on the `swapType` value.
-     * @returns {SwapInfo} Swap information including return amount and swaps structure to be submitted to Vault.
+     * @param swapOptions
+     * @param useBpts Set to true to consider join/exit weighted pool paths (these will need formatted and submitted via Relayer)
+     * @returns Swap information including return amount and swaps structure to be submitted to Vault.
      */
     async getSwaps(
         tokenIn: string,
         tokenOut: string,
         swapType: SwapTypes,
         swapAmount: BigNumberish,
-        swapOptions?: Partial<SwapOptions>
+        swapOptions?: Partial<SwapOptions>,
+        useBpts = false
     ): Promise<SwapInfo> {
         if (!this.poolCacher.finishedFetching) return cloneDeep(EMPTY_SWAPINFO);
 
@@ -114,9 +118,11 @@ export class SOR {
             ...this.defaultSwapOptions,
             ...swapOptions,
         };
-
-        const pools: SubgraphPoolBase[] = this.poolCacher.getPools();
-
+        if (this.useBpt !== useBpts) {
+            options.forceRefresh = true;
+            this.useBpt = useBpts;
+        }
+        const pools: SubgraphPoolBase[] = this.poolCacher.getPools(useBpts);
         const filteredPools = filterPoolsByType(pools, options.poolTypeFilter);
 
         const wrappedInfo = await getWrappedInfo(

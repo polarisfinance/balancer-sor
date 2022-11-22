@@ -263,6 +263,7 @@ export const formatSwaps = (
                     swapAmountOut: amounts[i + 1].toString(),
                     tokenInDecimals: path.poolPairData[i].decimalsIn,
                     tokenOutDecimals: path.poolPairData[i].decimalsOut,
+                    returnAmount: amounts[amounts.length - 1].toString(),
                 };
                 pathSwaps.push(swap);
             }
@@ -285,6 +286,7 @@ export const formatSwaps = (
                     swapAmountOut: amounts[0].toString(),
                     tokenInDecimals: path.poolPairData[n - 1 - i].decimalsIn,
                     tokenOutDecimals: path.poolPairData[n - 1 - i].decimalsOut,
+                    returnAmount: amounts[0].toString(),
                 };
                 pathSwaps.unshift(swap);
             }
@@ -388,18 +390,29 @@ function getBestPathIds(
         });
 
         if (bestPathIndex === -1) {
-            return [[], []];
-        }
-
-        selectedPaths.push(paths[bestPathIndex]);
-        selectedPathExceedingAmounts.push(
-            swapAmount.minus(
-                bnum(
-                    formatFixed(paths[bestPathIndex].limitAmount, inputDecimals)
+            selectedPaths.push({
+                id: '',
+                swaps: [],
+                poolPairData: [],
+                limitAmount: BigNumber.from('0'),
+                pools: [],
+            });
+            selectedPathExceedingAmounts.push(ZERO);
+            return;
+        } else {
+            selectedPaths.push(paths[bestPathIndex]);
+            selectedPathExceedingAmounts.push(
+                swapAmount.minus(
+                    bnum(
+                        formatFixed(
+                            paths[bestPathIndex].limitAmount,
+                            inputDecimals
+                        )
+                    )
                 )
-            )
-        );
-        paths.splice(bestPathIndex, 1); // Remove path from list
+            );
+            paths.splice(bestPathIndex, 1); // Remove path from list
+        }
     });
 
     return [selectedPaths, selectedPathExceedingAmounts];

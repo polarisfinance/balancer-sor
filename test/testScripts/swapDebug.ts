@@ -8,15 +8,11 @@ dotenv.config();
 import { BigNumber, parseFixed } from '@ethersproject/bignumber';
 import { JsonRpcProvider } from '@ethersproject/providers';
 import { Wallet } from '@ethersproject/wallet';
-import { Contract } from '@ethersproject/contracts';
 import { SOR, SwapInfo, SwapTypes } from '../../src';
-import { CoingeckoTokenPriceService } from '../lib/coingeckoTokenPriceService';
-import { SubgraphPoolDataService } from '../lib/subgraphPoolDataService';
 import {
     Network,
     SOR_CONFIG,
     ADDRESSES,
-    SUBGRAPH_URLS,
     PROVIDER_URLS,
     vaultAddr,
     MULTIADDR,
@@ -24,27 +20,20 @@ import {
 import { buildTx, printOutput } from './utils';
 
 import vaultArtifact from '../../src/abi/Vault.json';
+import { DatabasePoolDataService } from '../lib/databasePoolDataService';
+import { DebugTokenPriceService } from '../lib/debugTokenPriceService';
 
 // Setup SOR with data services
 function setUp(networkId: Network, provider: JsonRpcProvider): SOR {
     // The SOR needs to fetch pool data from an external source. This provider fetches from Subgraph and onchain calls.
-    const subgraphPoolDataService = new SubgraphPoolDataService({
-        chainId: networkId,
-        vaultAddress: vaultAddr,
-        multiAddress: MULTIADDR[networkId],
-        provider,
-        subgraphUrl: SUBGRAPH_URLS[networkId],
-        onchain: true,
-    });
+    const databasePoolDataService = new DatabasePoolDataService();
 
     // Use the mock pool data service if you want to use pool data from a file.
     // const poolsSource = require('../testData/testPools/gusdBug.json');
     // mockPoolDataService.setPools(poolsSource);
 
     // Use coingecko to fetch token price information. Used to calculate cost of additonal swaps/hops.
-    const coingeckoTokenPriceService = new CoingeckoTokenPriceService(
-        networkId
-    );
+    const coingeckoTokenPriceService = new DebugTokenPriceService(250);
     // Use the mock token price service if you want to manually set the token price in native asset
     // import { mockPoolDataService } from '../lib/mockPoolDataService';
     //  mockTokenPriceService.setTokenPrice('0.001');
@@ -52,28 +41,30 @@ function setUp(networkId: Network, provider: JsonRpcProvider): SOR {
     return new SOR(
         provider,
         SOR_CONFIG[networkId],
-        subgraphPoolDataService,
+        databasePoolDataService,
         coingeckoTokenPriceService
     );
 }
 
 export async function swap(): Promise<void> {
-    const networkId = Network.POLYGON;
+    const networkId = Network.FANTOM;
     const provider = new JsonRpcProvider(PROVIDER_URLS[networkId]);
     // gasPrice is used by SOR as a factor to determine how many pools to swap against.
     // i.e. higher cost means more costly to trade against lots of different pools.
     const gasPrice = BigNumber.from('40000000000');
     // This determines the max no of pools the SOR will use to swap.
-    const maxPools = 4;
-    const tokenIn = ADDRESSES[networkId].USDT;
+
+    // ERROR TypeError: Cannot read properties of undefined (reading 'lte')
+    const maxPools = 8;
+    const tokenIn = ADDRESSES[networkId].DEUS;
     const tokenOut = ADDRESSES[networkId].USDC;
     const swapType: SwapTypes = SwapTypes.SwapExactIn;
-    const swapAmount = parseFixed('100', 6);
+    const swapAmount = parseFixed('20', 18);
 
     const sor = setUp(networkId, provider);
 
-    // Get pools info using Subgraph/onchain calls
     await sor.fetchPools();
+    await sor.reloadGraph();
 
     // Find swapInfo for best trade for given pair and amount
     const swapInfo: SwapInfo = await sor.getSwaps(
@@ -81,8 +72,7 @@ export async function swap(): Promise<void> {
         tokenOut.address,
         swapType,
         swapAmount,
-        { gasPrice, maxPools },
-        false
+        { gasPrice, maxPools }
     );
 
     // Simulate the swap transaction
@@ -103,41 +93,41 @@ export async function swap(): Promise<void> {
             tx.limits
         );
 
-        if (![tokenIn, tokenOut].includes(ADDRESSES[networkId].STETH)) {
-            console.log('VAULT SWAP');
-            const vaultContract = new Contract(
-                vaultAddr,
-                vaultArtifact,
-                provider
-            );
-            // Simulates a call to `batchSwap`, returning an array of Vault asset deltas.
-            // Each element in the array corresponds to the asset at the same index, and indicates the number of tokens(or ETH)
-            // the Vault would take from the sender(if positive) or send to the recipient(if negative).
-            const deltas = await vaultContract.queryBatchSwap(
-                swapType,
-                swapInfo.swaps,
-                swapInfo.tokenAddresses,
-                tx.funds
-            );
-            console.log(deltas.toString());
-            // To actually make the trade:
-            // vaultContract.connect(wallet);
-            // const tx = await vaultContract
-            //     .connect(wallet)
-            //     .batchSwap(
-            //         swapType,
-            //         swapInfo.swaps,
-            //         swapInfo.tokenAddresses,
-            //         tx.funds,
-            //         tx.limits,
-            //         tx.deadline,
-            //         tx.overRides
-            //     );
+        // if (![tokenIn, tokenOut].includes(ADDRESSES[networkId].STETH)) {
+        //     console.log('VAULT SWAP');
+        //     const vaultContract = new Contract(
+        //         vaultAddr,
+        //         vaultArtifact,
+        //         provider
+        //     );
+        //     // Simulates a call to `batchSwap`, returning an array of Vault asset deltas.
+        //     // Each element in the array corresponds to the asset at the same index, and indicates the number of tokens(or ETH)
+        //     // the Vault would take from the sender(if positive) or send to the recipient(if negative).
+        //     const deltas = await vaultContract.queryBatchSwap(
+        //         swapType,
+        //         swapInfo.swaps,
+        //         swapInfo.tokenAddresses,
+        //         tx.funds
+        //     );
+        //     console.log(deltas.toString());
+        //     // To actually make the trade:
+        //     // vaultContract.connect(wallet);
+        //     // const tx = await vaultContract
+        //     //     .connect(wallet)
+        //     //     .batchSwap(
+        //     //         swapType,
+        //     //         swapInfo.swaps,
+        //     //         swapInfo.tokenAddresses,
+        //     //         tx.funds,
+        //     //         tx.limits,
+        //     //         tx.deadline,
+        //     //         tx.overRides
+        //     //     );
 
-            // console.log(`tx: ${tx}`);
-        } else {
-            console.log('RELAYER SWAP - Execute via batchRelayer.');
-        }
+        //     // console.log(`tx: ${tx}`);
+        // } else {
+        //     console.log('RELAYER SWAP - Execute via batchRelayer.');
+        // }
     } else {
         console.log('No Valid Swap');
         await printOutput(
