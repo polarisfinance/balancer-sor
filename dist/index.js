@@ -4937,6 +4937,16 @@ function bnum(val) {
 
 const isSameAddress = (address1, address2) =>
     address.getAddress(address1) === address.getAddress(address2);
+/// Parses a fixed-point decimal string into a BigNumber
+/// If we do not have enough decimals to express the number, we truncate it
+function safeParseFixed(value, decimals = 0) {
+    const [integer, fraction] = value.split('.');
+    if (!fraction) {
+        return bignumber.parseFixed(value, decimals);
+    }
+    const safeValue = integer + '.' + fraction.slice(0, decimals);
+    return bignumber.parseFixed(safeValue, decimals);
+}
 
 exports.SwapTypes = void 0;
 (function (SwapTypes) {
@@ -4952,6 +4962,7 @@ exports.PoolTypes = void 0;
     PoolTypes[(PoolTypes['Linear'] = 4)] = 'Linear';
     PoolTypes[(PoolTypes['Gyro2'] = 5)] = 'Gyro2';
     PoolTypes[(PoolTypes['Gyro3'] = 6)] = 'Gyro3';
+    PoolTypes[(PoolTypes['GyroE'] = 7)] = 'GyroE';
 })(exports.PoolTypes || (exports.PoolTypes = {}));
 exports.PoolFilter = void 0;
 (function (PoolFilter) {
@@ -4965,9 +4976,10 @@ exports.PoolFilter = void 0;
     PoolFilter['AaveLinear'] = 'AaveLinear';
     PoolFilter['StablePhantom'] = 'StablePhantom';
     PoolFilter['ERC4626Linear'] = 'ERC4626Linear';
+    PoolFilter['ComposableStable'] = 'ComposableStable';
     PoolFilter['Gyro2'] = 'Gyro2';
     PoolFilter['Gyro3'] = 'Gyro3';
-    PoolFilter['ComposableStable'] = 'ComposableStable';
+    PoolFilter['GyroE'] = 'GyroE';
 })(exports.PoolFilter || (exports.PoolFilter = {}));
 
 const BZERO = BigInt(0);
@@ -5473,6 +5485,7 @@ LogExpMath.a10 = BigInt('113314845306682631683'); // eˆ(x10)
 LogExpMath.x11 = BigInt('6250000000000000000'); // 2ˆ-4
 LogExpMath.a11 = BigInt('106449445891785942956'); // eˆ(x11)
 
+const MAX_INVARIANT_RATIO = BigInt('3000000000000000000'); // 3e18
 // The following function are BigInt versions implemented by Sergio.
 // BigInt was requested from integrators as it is more efficient.
 // Swap outcomes formulas should match exactly those from smart contracts.
@@ -5509,13 +5522,13 @@ function _calcInGivenOut$3(
     const power = MathSol.powUpFixed(base, exponent);
     const ratio = MathSol.sub(power, MathSol.ONE);
     const amountIn = MathSol.mulUpFixed(balanceIn, ratio);
-    return addFee$1(amountIn, fee);
+    return addFee$2(amountIn, fee);
 }
 function subtractFee$1(amount, fee) {
     const feeAmount = MathSol.mulUpFixed(amount, fee);
     return amount - feeAmount;
 }
-function addFee$1(amount, fee) {
+function addFee$2(amount, fee) {
     return MathSol.divUpFixed(amount, MathSol.complementFixed(fee));
 }
 // TO DO - Swap old versions of these in Pool for the BigInt version
@@ -5744,6 +5757,51 @@ function _calcBptInGivenExactTokensOut$1(
         MathSol.complementFixed(invariantRatio)
     );
 }
+const _calcTokenInGivenExactBptOut$1 = (
+    balance,
+    normalizedWeight,
+    bptAmountOut,
+    bptTotalSupply,
+    swapFee
+) => {
+    /*****************************************************************************************
+    // tokenInForExactBptOut                                                                //
+    // a = amountIn                                                                         //
+    // b = balance                      /  /     bpt + bptOut     \    (1 / w)      \       //
+    // bptOut = bptAmountOut   a = b * |  | ---------------------- | ^          - 1  |      //
+    // bpt = bptTotalSupply             \  \         bpt          /                 /       //
+    // w = normalizedWeight                                                                 //
+    *****************************************************************************************/
+    // Token in, so we round up overall
+    // Calculate the factor by which the invariant will increase after minting `bptAmountOut`
+    const invariantRatio = MathSol.divUpFixed(
+        MathSol.add(bptTotalSupply, bptAmountOut),
+        bptTotalSupply
+    );
+    if (invariantRatio > MAX_INVARIANT_RATIO) {
+        throw new Error('MAX_OUT_BPT_FOR_TOKEN_IN');
+    }
+    // Calculate by how much the token balance has to increase to cause `invariantRatio`
+    const balanceRatio = MathSol.powUpFixed(
+        invariantRatio,
+        MathSol.divUpFixed(MathSol.ONE, normalizedWeight)
+    );
+    const amountInWithoutFee = MathSol.mulUpFixed(
+        balance,
+        MathSol.sub(balanceRatio, MathSol.ONE)
+    );
+    // We can now compute how much extra balance is being deposited and used in virtual swaps, and charge swap fees accordingly
+    const taxablePercentage = MathSol.complementFixed(normalizedWeight);
+    const taxableAmount = MathSol.mulUpFixed(
+        amountInWithoutFee,
+        taxablePercentage
+    );
+    const nonTaxableAmount = MathSol.sub(amountInWithoutFee, taxableAmount);
+    return MathSol.add(
+        nonTaxableAmount,
+        MathSol.divUpFixed(taxableAmount, MathSol.complementFixed(swapFee))
+    );
+};
 /**
  * @dev Intermediate function to avoid stack-too-deep errors.
  */
@@ -5844,8 +5902,123 @@ function _calcDueProtocolSwapFeeBptAmount(
         ? BZERO
         : MathSol.divDownFixed(numerator, denominator);
 }
-// The following functions are TS versions originally implemented by Fernando
-// All functions came from https://www.wolframcloud.com/obj/fernando.martinel/Published/SOR_equations_published.nb
+// spotPriceAfterSwap
+// PairType = 'token->token'
+// SwapType = 'swapExactIn'
+function _spotPriceAfterSwapExactTokenInForTokenOut$4(amount, poolPairData) {
+    const Bi = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceIn, poolPairData.decimalsIn)
+    );
+    const Bo = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceOut, poolPairData.decimalsOut)
+    );
+    const wi = parseFloat(bignumber.formatFixed(poolPairData.weightIn, 18));
+    const wo = parseFloat(bignumber.formatFixed(poolPairData.weightOut, 18));
+    const Ai = amount.toNumber();
+    const f = parseFloat(bignumber.formatFixed(poolPairData.swapFee, 18));
+    return bnum(
+        -(
+            (Bi * wo) /
+            (Bo * (-1 + f) * (Bi / (Ai + Bi - Ai * f)) ** ((wi + wo) / wo) * wi)
+        )
+    );
+}
+// PairType = 'token->token'
+// SwapType = 'swapExactOut'
+function _spotPriceAfterSwapTokenInForExactTokenOut$4(amount, poolPairData) {
+    const Bi = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceIn, poolPairData.decimalsIn)
+    );
+    const Bo = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceOut, poolPairData.decimalsOut)
+    );
+    const wi = parseFloat(bignumber.formatFixed(poolPairData.weightIn, 18));
+    const wo = parseFloat(bignumber.formatFixed(poolPairData.weightOut, 18));
+    const Ao = amount.toNumber();
+    const f = parseFloat(bignumber.formatFixed(poolPairData.swapFee, 18));
+    return bnum(
+        -(
+            (Bi * (Bo / (-Ao + Bo)) ** ((wi + wo) / wi) * wo) /
+            (Bo * (-1 + f) * wi)
+        )
+    );
+}
+// PairType = 'token->BPT'
+// SwapType = 'swapExactIn'
+function _spotPriceAfterSwapExactTokenInForBPTOut$2(amount, poolPairData) {
+    const Bi = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceIn, poolPairData.decimalsIn)
+    );
+    const Bbpt = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceOut, poolPairData.decimalsOut)
+    );
+    const wi = parseFloat(bignumber.formatFixed(poolPairData.weightIn, 18));
+    const Ai = amount.toNumber();
+    const f = parseFloat(bignumber.formatFixed(poolPairData.swapFee, 18));
+    return bnum(
+        (Bi * ((Ai + Bi + Ai * f * (-1 + wi)) / Bi) ** (1 - wi)) /
+            (Bbpt * (1 + f * (-1 + wi)) * wi)
+    );
+}
+// PairType = 'token->BPT'
+// SwapType = 'swapExactIn'
+function _spotPriceAfterSwapBptOutGivenExactTokenInBigInt(
+    balanceIn,
+    balanceOut,
+    weightIn,
+    amountIn,
+    swapFeeRatio
+) {
+    const feeFactor =
+        MathSol.ONE -
+        MathSol.mulDownFixed(MathSol.complementFixed(weightIn), swapFeeRatio);
+    const denominatorFactor = MathSol.powDown(
+        MathSol.ONE + (amountIn * feeFactor) / balanceIn,
+        MathSol.complementFixed(weightIn)
+    );
+    return MathSol.divDownFixed(
+        MathSol.ONE,
+        (balanceOut * weightIn * feeFactor) / (balanceIn * denominatorFactor)
+    );
+}
+// PairType = 'BPT->token'
+// SwapType = 'swapExactIn'
+function _spotPriceAfterSwapExactBPTInForTokenOut$2(amount, poolPairData) {
+    const Bbpt = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceIn, poolPairData.decimalsIn)
+    );
+    const Bo = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceOut, poolPairData.decimalsOut)
+    );
+    const wo = parseFloat(bignumber.formatFixed(poolPairData.weightOut, 18));
+    const Aibpt = amount.toNumber();
+    const f = parseFloat(bignumber.formatFixed(poolPairData.swapFee));
+    return bnum(
+        ((1 - Aibpt / Bbpt) ** ((-1 + wo) / wo) *
+            Bbpt *
+            (1 + f * (-1 + wo)) *
+            wo) /
+            Bo
+    );
+}
+// PairType = 'BPT->token'
+// SwapType = 'swapExactOut'
+function _spotPriceAfterSwapBPTInForExactTokenOut$2(amount, poolPairData) {
+    const Bbpt = parseFloat(bignumber.formatFixed(poolPairData.balanceIn, 18));
+    const Bo = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceOut, poolPairData.decimalsOut)
+    );
+    const wo = parseFloat(bignumber.formatFixed(poolPairData.weightOut, 18));
+    const Ao = amount.toNumber();
+    const f = parseFloat(bignumber.formatFixed(poolPairData.swapFee, 18));
+    return bnum(
+        (Bbpt *
+            (1 + f * (-1 + wo)) *
+            wo *
+            (1 + (Ao * (-1 + f - f * wo)) / Bo) ** (-1 + wo)) /
+            Bo
+    );
+}
 // PairType = 'token->BPT'
 // SwapType = 'swapExactOut'
 function _spotPriceAfterSwapTokenInForExactBPTOut$3(amount, poolPairData) {
@@ -5905,43 +6078,86 @@ function _derivativeSpotPriceAfterSwapTokenInForExactTokenOut$5(
         )
     );
 }
-// PairType = 'token->token'
+// PairType = 'token->BPT'
 // SwapType = 'swapExactIn'
-function _spotPriceAfterSwapExactTokenInForTokenOut$4(amount, poolPairData) {
+function _derivativeSpotPriceAfterSwapExactTokenInForBPTOut$1(
+    amount,
+    poolPairData
+) {
     const Bi = parseFloat(
         bignumber.formatFixed(poolPairData.balanceIn, poolPairData.decimalsIn)
     );
-    const Bo = parseFloat(
-        bignumber.formatFixed(poolPairData.balanceOut, poolPairData.decimalsOut)
-    );
+    const Bbpt = parseFloat(bignumber.formatFixed(poolPairData.balanceOut, 18));
     const wi = parseFloat(bignumber.formatFixed(poolPairData.weightIn, 18));
-    const wo = parseFloat(bignumber.formatFixed(poolPairData.weightOut, 18));
     const Ai = amount.toNumber();
     const f = parseFloat(bignumber.formatFixed(poolPairData.swapFee, 18));
     return bnum(
-        -(
-            (Bi * wo) /
-            (Bo * (-1 + f) * (Bi / (Ai + Bi - Ai * f)) ** ((wi + wo) / wo) * wi)
-        )
+        -((-1 + wi) / (Bbpt * ((Ai + Bi + Ai * f * (-1 + wi)) / Bi) ** wi * wi))
     );
 }
-// PairType = 'token->token'
+// PairType = 'token->BPT'
 // SwapType = 'swapExactOut'
-function _spotPriceAfterSwapTokenInForExactTokenOut$4(amount, poolPairData) {
+function _derivativeSpotPriceAfterSwapTokenInForExactBPTOut$1(
+    amount,
+    poolPairData
+) {
     const Bi = parseFloat(
         bignumber.formatFixed(poolPairData.balanceIn, poolPairData.decimalsIn)
     );
-    const Bo = parseFloat(
-        bignumber.formatFixed(poolPairData.balanceOut, poolPairData.decimalsOut)
+    const Bbpt = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceOut.toNumber(), 18)
     );
     const wi = parseFloat(bignumber.formatFixed(poolPairData.weightIn, 18));
-    const wo = parseFloat(bignumber.formatFixed(poolPairData.weightOut, 18));
-    const Ao = amount.toNumber();
+    const Aobpt = amount.toNumber();
     const f = parseFloat(bignumber.formatFixed(poolPairData.swapFee, 18));
     return bnum(
         -(
-            (Bi * (Bo / (-Ao + Bo)) ** ((wi + wo) / wi) * wo) /
-            (Bo * (-1 + f) * wi)
+            (((Aobpt + Bbpt) / Bbpt) ** (1 / wi) * Bi * (-1 + wi)) /
+            ((Aobpt + Bbpt) ** 2 * (1 + f * (-1 + wi)) * wi ** 2)
+        )
+    );
+}
+// PairType = 'BPT->token'
+// SwapType = 'swapExactIn'
+function _derivativeSpotPriceAfterSwapExactBPTInForTokenOut$1(
+    amount,
+    poolPairData
+) {
+    const Bbpt = parseFloat(bignumber.formatFixed(poolPairData.balanceIn, 18));
+    const Bo = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceOut, poolPairData.decimalsOut)
+    );
+    const wo = parseFloat(bignumber.formatFixed(poolPairData.weightOut, 18));
+    const Aibpt = amount.toNumber();
+    const f = parseFloat(bignumber.formatFixed(poolPairData.swapFee, 18));
+    return bnum(
+        -(
+            ((1 + f * (-1 + wo)) * (-1 + wo)) /
+            ((1 - Aibpt / Bbpt) ** (1 / wo) * Bo)
+        )
+    );
+}
+// PairType = 'BPT->token'
+// SwapType = 'swapExactOut'
+function _derivativeSpotPriceAfterSwapBPTInForExactTokenOut$1(
+    amount,
+    poolPairData
+) {
+    const Bbpt = parseFloat(bignumber.formatFixed(poolPairData.balanceIn, 18));
+    const Bo = parseFloat(
+        bignumber.formatFixed(poolPairData.balanceOut, poolPairData.decimalsOut)
+    );
+    const wo = parseFloat(bignumber.formatFixed(poolPairData.weightOut));
+    const Ao = amount.toNumber();
+    const f = parseFloat(bignumber.formatFixed(poolPairData.swapFee));
+    return bnum(
+        -(
+            (Bbpt *
+                (1 + f * (-1 + wo)) ** 2 *
+                (-1 + wo) *
+                wo *
+                (1 + (Ao * (-1 + f - f * wo)) / Bo) ** (-2 + wo)) /
+            Bo ** 2
         )
     );
 }
@@ -5958,20 +6174,43 @@ var weightedMath = /*#__PURE__*/ Object.freeze({
     _calcTokensOutGivenExactBptIn: _calcTokensOutGivenExactBptIn$1,
     _calcTokenOutGivenExactBptIn: _calcTokenOutGivenExactBptIn$1,
     _calcBptInGivenExactTokensOut: _calcBptInGivenExactTokensOut$1,
+    _calcTokenInGivenExactBptOut: _calcTokenInGivenExactBptOut$1,
     _calculateInvariant: _calculateInvariant$3,
     _calcDueProtocolSwapFeeBptAmount: _calcDueProtocolSwapFeeBptAmount,
+    _spotPriceAfterSwapExactTokenInForTokenOut:
+        _spotPriceAfterSwapExactTokenInForTokenOut$4,
+    _spotPriceAfterSwapTokenInForExactTokenOut:
+        _spotPriceAfterSwapTokenInForExactTokenOut$4,
+    _spotPriceAfterSwapExactTokenInForBPTOut:
+        _spotPriceAfterSwapExactTokenInForBPTOut$2,
+    _spotPriceAfterSwapBptOutGivenExactTokenInBigInt:
+        _spotPriceAfterSwapBptOutGivenExactTokenInBigInt,
+    _spotPriceAfterSwapExactBPTInForTokenOut:
+        _spotPriceAfterSwapExactBPTInForTokenOut$2,
+    _spotPriceAfterSwapBPTInForExactTokenOut:
+        _spotPriceAfterSwapBPTInForExactTokenOut$2,
     _spotPriceAfterSwapTokenInForExactBPTOut:
         _spotPriceAfterSwapTokenInForExactBPTOut$3,
     _derivativeSpotPriceAfterSwapExactTokenInForTokenOut:
         _derivativeSpotPriceAfterSwapExactTokenInForTokenOut$5,
     _derivativeSpotPriceAfterSwapTokenInForExactTokenOut:
         _derivativeSpotPriceAfterSwapTokenInForExactTokenOut$5,
-    _spotPriceAfterSwapExactTokenInForTokenOut:
-        _spotPriceAfterSwapExactTokenInForTokenOut$4,
-    _spotPriceAfterSwapTokenInForExactTokenOut:
-        _spotPriceAfterSwapTokenInForExactTokenOut$4,
+    _derivativeSpotPriceAfterSwapExactTokenInForBPTOut:
+        _derivativeSpotPriceAfterSwapExactTokenInForBPTOut$1,
+    _derivativeSpotPriceAfterSwapTokenInForExactBPTOut:
+        _derivativeSpotPriceAfterSwapTokenInForExactBPTOut$1,
+    _derivativeSpotPriceAfterSwapExactBPTInForTokenOut:
+        _derivativeSpotPriceAfterSwapExactBPTInForTokenOut$1,
+    _derivativeSpotPriceAfterSwapBPTInForExactTokenOut:
+        _derivativeSpotPriceAfterSwapBPTInForExactTokenOut$1,
 });
 
+var PairTypes$2;
+(function (PairTypes) {
+    PairTypes[(PairTypes['BptToToken'] = 0)] = 'BptToToken';
+    PairTypes[(PairTypes['TokenToBpt'] = 1)] = 'TokenToBpt';
+    PairTypes[(PairTypes['TokenToToken'] = 2)] = 'TokenToToken';
+})(PairTypes$2 || (PairTypes$2 = {}));
 class WeightedPool {
     constructor(
         id,
@@ -6033,6 +6272,14 @@ class WeightedPool {
             .parseFixed(tO.weight, 18)
             .mul(constants.WeiPerEther)
             .div(this.totalWeight);
+        let pairType;
+        if (tokenIn == this.address) {
+            pairType = PairTypes$2.BptToToken;
+        } else if (tokenOut == this.address) {
+            pairType = PairTypes$2.TokenToBpt;
+        } else {
+            pairType = PairTypes$2.TokenToToken;
+        }
         const poolPairData = {
             id: this.id,
             address: this.address,
@@ -6043,6 +6290,7 @@ class WeightedPool {
             decimalsOut: Number(decimalsOut),
             balanceIn: bignumber.parseFixed(balanceIn, decimalsIn),
             balanceOut: bignumber.parseFixed(balanceOut, decimalsOut),
+            pairType: pairType,
             weightIn: weightIn,
             weightOut: weightOut,
             swapFee: this.swapFee,
@@ -6054,6 +6302,7 @@ class WeightedPool {
     // pool but also depends on the shape of the invariant curve.
     // As a standard, we define normalized liquidity in tokenOut
     getNormalizedLiquidity(poolPairData) {
+        // this should be different if tokenIn or tokenOut are the BPT
         return bnum(
             bignumber.formatFixed(
                 poolPairData.balanceOut
@@ -6102,24 +6351,52 @@ class WeightedPool {
     // calcOutGivenIn
     _exactTokenInForTokenOut(poolPairData, amount) {
         if (amount.isNaN()) return amount;
-        const balanceIn = poolPairData.balanceIn;
-        const balanceOut = poolPairData.balanceOut;
+        const amountIn = bignumber
+            .parseFixed(amount.dp(18, 1).toString(), 18)
+            .toBigInt();
         const decimalsIn = poolPairData.decimalsIn;
         const decimalsOut = poolPairData.decimalsOut;
+        const balanceIn = takeToPrecision18(
+            poolPairData.balanceIn,
+            decimalsIn
+        ).toBigInt();
+        const balanceOut = takeToPrecision18(
+            poolPairData.balanceOut,
+            decimalsOut
+        ).toBigInt();
+        const normalizedWeightIn = poolPairData.weightIn.toBigInt();
+        const normalizedWeightOut = poolPairData.weightOut.toBigInt();
+        const swapFee = poolPairData.swapFee.toBigInt();
+        let returnAmt;
         try {
-            const amt = _calcOutGivenIn$3(
-                takeToPrecision18(balanceIn, decimalsIn).toBigInt(),
-                poolPairData.weightIn.toBigInt(),
-                takeToPrecision18(balanceOut, decimalsOut).toBigInt(),
-                poolPairData.weightOut.toBigInt(),
-                bignumber
-                    .parseFixed(amount.dp(18, 1).toString(), 18)
-                    .toBigInt(),
-                poolPairData.swapFee.toBigInt()
-            );
+            if (poolPairData.pairType === PairTypes$2.TokenToBpt) {
+                returnAmt = _calcBptOutGivenExactTokensIn$1(
+                    [balanceIn, BigInt(1)],
+                    [normalizedWeightIn, MathSol.ONE - normalizedWeightIn],
+                    [amountIn, BigInt(0)],
+                    balanceOut,
+                    swapFee
+                );
+            } else if (poolPairData.pairType === PairTypes$2.BptToToken) {
+                returnAmt = _calcTokenOutGivenExactBptIn$1(
+                    balanceOut,
+                    normalizedWeightOut,
+                    amountIn,
+                    balanceIn,
+                    swapFee
+                );
+            } else {
+                returnAmt = _calcOutGivenIn$3(
+                    balanceIn,
+                    normalizedWeightIn,
+                    balanceOut,
+                    normalizedWeightOut,
+                    amountIn,
+                    swapFee
+                );
+            }
             // return human scaled
-            const amtOldBn = bnum(amt.toString());
-            return scale(amtOldBn, -18);
+            return scale(bnum(returnAmt.toString()), -18);
         } catch (err) {
             return ZERO;
         }
@@ -6130,45 +6407,109 @@ class WeightedPool {
     // calcInGivenOut
     _tokenInForExactTokenOut(poolPairData, amount) {
         if (amount.isNaN()) return amount;
-        const balanceIn = poolPairData.balanceIn;
-        const balanceOut = poolPairData.balanceOut;
+        const amountOut = bignumber
+            .parseFixed(amount.dp(18, 1).toString(), 18)
+            .toBigInt();
         const decimalsIn = poolPairData.decimalsIn;
         const decimalsOut = poolPairData.decimalsOut;
+        const balanceIn = takeToPrecision18(
+            poolPairData.balanceIn,
+            decimalsIn
+        ).toBigInt();
+        const balanceOut = takeToPrecision18(
+            poolPairData.balanceOut,
+            decimalsOut
+        ).toBigInt();
+        const normalizedWeightIn = poolPairData.weightIn.toBigInt();
+        const normalizedWeightOut = poolPairData.weightOut.toBigInt();
+        const swapFee = poolPairData.swapFee.toBigInt();
+        let returnAmt;
         try {
-            const amt = _calcInGivenOut$3(
-                takeToPrecision18(balanceIn, decimalsIn).toBigInt(),
-                poolPairData.weightIn.toBigInt(),
-                takeToPrecision18(balanceOut, decimalsOut).toBigInt(),
-                poolPairData.weightOut.toBigInt(),
-                bignumber
-                    .parseFixed(amount.dp(18, 1).toString(), 18)
-                    .toBigInt(),
-                poolPairData.swapFee.toBigInt()
-            );
+            if (poolPairData.pairType === PairTypes$2.TokenToBpt) {
+                returnAmt = _calcTokenInGivenExactBptOut$1(
+                    balanceIn,
+                    normalizedWeightIn,
+                    amountOut,
+                    balanceOut,
+                    swapFee
+                );
+            } else if (poolPairData.pairType === PairTypes$2.BptToToken) {
+                returnAmt = _calcBptInGivenExactTokensOut$1(
+                    [balanceOut, BigInt(1)],
+                    [normalizedWeightOut, MathSol.ONE - normalizedWeightOut],
+                    [amountOut, BigInt(0)],
+                    balanceIn,
+                    swapFee
+                );
+            } else {
+                returnAmt = _calcInGivenOut$3(
+                    balanceIn,
+                    normalizedWeightIn,
+                    balanceOut,
+                    normalizedWeightOut,
+                    amountOut,
+                    swapFee
+                );
+            }
             // return human scaled
-            const amtOldBn = bnum(amt.toString());
-            return scale(amtOldBn, -18);
+            return scale(bnum(returnAmt.toString()), -18);
         } catch (err) {
             return ZERO;
         }
     }
     _spotPriceAfterSwapExactTokenInForTokenOut(poolPairData, amount) {
-        return _spotPriceAfterSwapExactTokenInForTokenOut$4(
-            amount,
-            poolPairData
-        );
+        if (poolPairData.pairType === PairTypes$2.TokenToBpt) {
+            return _spotPriceAfterSwapExactTokenInForBPTOut$2(
+                amount,
+                poolPairData
+            );
+        } else if (poolPairData.pairType === PairTypes$2.BptToToken) {
+            return _spotPriceAfterSwapExactBPTInForTokenOut$2(
+                amount,
+                poolPairData
+            );
+        } else {
+            return _spotPriceAfterSwapExactTokenInForTokenOut$4(
+                amount,
+                poolPairData
+            );
+        }
     }
     _spotPriceAfterSwapTokenInForExactTokenOut(poolPairData, amount) {
-        return _spotPriceAfterSwapTokenInForExactTokenOut$4(
-            amount,
-            poolPairData
-        );
+        if (poolPairData.pairType === PairTypes$2.TokenToBpt) {
+            return _spotPriceAfterSwapTokenInForExactBPTOut$3(
+                amount,
+                poolPairData
+            );
+        } else if (poolPairData.pairType === PairTypes$2.BptToToken) {
+            return _spotPriceAfterSwapBPTInForExactTokenOut$2(
+                amount,
+                poolPairData
+            );
+        } else {
+            return _spotPriceAfterSwapTokenInForExactTokenOut$4(
+                amount,
+                poolPairData
+            );
+        }
     }
     _derivativeSpotPriceAfterSwapExactTokenInForTokenOut(poolPairData, amount) {
-        return _derivativeSpotPriceAfterSwapExactTokenInForTokenOut$5(
-            amount,
-            poolPairData
-        );
+        if (poolPairData.pairType === PairTypes$2.TokenToBpt) {
+            return _derivativeSpotPriceAfterSwapExactTokenInForBPTOut$1(
+                amount,
+                poolPairData
+            );
+        } else if (poolPairData.pairType === PairTypes$2.BptToToken) {
+            return _derivativeSpotPriceAfterSwapExactBPTInForTokenOut$1(
+                amount,
+                poolPairData
+            );
+        } else {
+            return _derivativeSpotPriceAfterSwapExactTokenInForTokenOut$5(
+                amount,
+                poolPairData
+            );
+        }
     }
     _derivativeSpotPriceAfterSwapTokenInForExactTokenOut(poolPairData, amount) {
         return _derivativeSpotPriceAfterSwapTokenInForExactTokenOut$5(
@@ -6829,7 +7170,7 @@ function _calcInGivenOut$2(
         MathSol.sub(finalBalanceIn, balances[tokenIndexIn]),
         BigInt(1)
     );
-    amountIn = addFee(amountIn, fee);
+    amountIn = addFee$1(amountIn, fee);
     return amountIn;
 }
 function _calcBptOutGivenExactTokensIn(
@@ -7139,7 +7480,7 @@ function subtractFee(amount, fee) {
     const feeAmount = MathSol.mulUpFixed(amount, fee);
     return amount - feeAmount;
 }
-function addFee(amount, fee) {
+function addFee$1(amount, fee) {
     return MathSol.divUpFixed(amount, MathSol.complementFixed(fee));
 }
 /////////
@@ -11145,761 +11486,6 @@ class PhantomStablePool {
 }
 PhantomStablePool.AMP_DECIMALS = 3;
 
-// Swap limits: amounts swapped may not be larger than this percentage of total balance.
-bignumber.parseFixed('0.3', 18);
-bignumber.parseFixed('0.3', 18);
-const SQRT_1E_NEG_1$1 = bignumber.BigNumber.from('316227766016837933');
-const SQRT_1E_NEG_3$1 = bignumber.BigNumber.from('31622776601683793');
-const SQRT_1E_NEG_5$1 = bignumber.BigNumber.from('3162277660168379');
-const SQRT_1E_NEG_7$1 = bignumber.BigNumber.from('316227766016837');
-const SQRT_1E_NEG_9$1 = bignumber.BigNumber.from('31622776601683');
-const SQRT_1E_NEG_11$1 = bignumber.BigNumber.from('3162277660168');
-const SQRT_1E_NEG_13$1 = bignumber.BigNumber.from('316227766016');
-const SQRT_1E_NEG_15$1 = bignumber.BigNumber.from('31622776601');
-const SQRT_1E_NEG_17$1 = bignumber.BigNumber.from('3162277660');
-
-// Helpers
-function _sqrt(input, tolerance) {
-    if (input.isZero()) {
-        return bignumber.BigNumber.from(0);
-    }
-    let guess = _makeInitialGuess$1(input);
-    // 7 iterations
-    for (let i of new Array(7).fill(0)) {
-        guess = guess.add(input.mul(constants.WeiPerEther).div(guess)).div(2);
-    }
-    // Check in some epsilon range
-    // Check square is more or less correct
-    const guessSquared = guess.mul(guess).div(constants.WeiPerEther);
-    if (
-        !(
-            guessSquared.lte(input.add(mulUp$1(guess, tolerance))) &&
-            guessSquared.gte(input.sub(mulUp$1(guess, tolerance)))
-        )
-    )
-        throw new Error('Gyro2Pool: _sqrt failed');
-    return guess;
-}
-function _makeInitialGuess$1(input) {
-    if (input.gte(constants.WeiPerEther)) {
-        return bignumber.BigNumber.from(2)
-            .pow(_intLog2Halved$1(input.div(constants.WeiPerEther)))
-            .mul(constants.WeiPerEther);
-    } else {
-        if (input.lte('10')) {
-            return SQRT_1E_NEG_17$1;
-        }
-        if (input.lte('100')) {
-            return bignumber.BigNumber.from('10000000000');
-        }
-        if (input.lte('1000')) {
-            return SQRT_1E_NEG_15$1;
-        }
-        if (input.lte('10000')) {
-            return bignumber.BigNumber.from('100000000000');
-        }
-        if (input.lte('100000')) {
-            return SQRT_1E_NEG_13$1;
-        }
-        if (input.lte('1000000')) {
-            return bignumber.BigNumber.from('1000000000000');
-        }
-        if (input.lte('10000000')) {
-            return SQRT_1E_NEG_11$1;
-        }
-        if (input.lte('100000000')) {
-            return bignumber.BigNumber.from('10000000000000');
-        }
-        if (input.lte('1000000000')) {
-            return SQRT_1E_NEG_9$1;
-        }
-        if (input.lte('10000000000')) {
-            return bignumber.BigNumber.from('100000000000000');
-        }
-        if (input.lte('100000000000')) {
-            return SQRT_1E_NEG_7$1;
-        }
-        if (input.lte('1000000000000')) {
-            return bignumber.BigNumber.from('1000000000000000');
-        }
-        if (input.lte('10000000000000')) {
-            return SQRT_1E_NEG_5$1;
-        }
-        if (input.lte('100000000000000')) {
-            return bignumber.BigNumber.from('10000000000000000');
-        }
-        if (input.lte('1000000000000000')) {
-            return SQRT_1E_NEG_3$1;
-        }
-        if (input.lte('10000000000000000')) {
-            return bignumber.BigNumber.from('100000000000000000');
-        }
-        if (input.lte('100000000000000000')) {
-            return SQRT_1E_NEG_1$1;
-        }
-        return input;
-    }
-}
-function _intLog2Halved$1(x) {
-    let n = 0;
-    for (let i = 128; i >= 2; i = i / 2) {
-        const factor = bignumber.BigNumber.from(2).pow(i);
-        if (x.gte(factor)) {
-            x = x.div(factor);
-            n += i / 2;
-        }
-    }
-    return n;
-}
-function mulUp$1(a, b) {
-    const product = a.mul(b);
-    return product.sub(1).div(constants.WeiPerEther).add(1);
-}
-function divUp$1(a, b) {
-    const aInflated = a.mul(constants.WeiPerEther);
-    return aInflated.sub(1).div(b).add(1);
-}
-function mulDown$1(a, b) {
-    const product = a.mul(b);
-    return product.div(constants.WeiPerEther);
-}
-function divDown$1(a, b) {
-    const aInflated = a.mul(constants.WeiPerEther);
-    return aInflated.div(b);
-}
-function _normalizeBalances$1(balances, decimalsIn, decimalsOut) {
-    const scalingFactors = [
-        bignumber.parseFixed('1', decimalsIn),
-        bignumber.parseFixed('1', decimalsOut),
-    ];
-    return balances.map((bal, index) =>
-        bal.mul(constants.WeiPerEther).div(scalingFactors[index])
-    );
-}
-/////////
-/// Fee calculations
-/////////
-function _reduceFee$1(amountIn, swapFee) {
-    const feeAmount = amountIn.mul(swapFee).div(constants.WeiPerEther);
-    return amountIn.sub(feeAmount);
-}
-function _addFee$1(amountIn, swapFee) {
-    return amountIn
-        .mul(constants.WeiPerEther)
-        .div(constants.WeiPerEther.sub(swapFee));
-}
-
-/////////
-/// Virtual Parameter calculations
-/////////
-function _findVirtualParams(invariant, sqrtAlpha, sqrtBeta) {
-    return [divDown$1(invariant, sqrtBeta), mulDown$1(invariant, sqrtAlpha)];
-}
-/////////
-/// Invariant Calculation
-/////////
-function _calculateInvariant$1(
-    balances, // balances
-    sqrtAlpha,
-    sqrtBeta
-) {
-    /**********************************************************************************************
-        // Calculate with quadratic formula
-        // 0 = (1-sqrt(alpha/beta)*L^2 - (y/sqrt(beta)+x*sqrt(alpha))*L - x*y)
-        // 0 = a*L^2 + b*L + c
-        // here a > 0, b < 0, and c < 0, which is a special case that works well w/o negative numbers
-        // taking mb = -b and mc = -c:                            (1/2)
-        //                                  mb + (mb^2 + 4 * a * mc)^                   //
-        //                   L =    ------------------------------------------          //
-        //                                          2 * a                               //
-        //                                                                              //
-        **********************************************************************************************/
-    const [a, mb, bSquare, mc] = _calculateQuadraticTerms(
-        balances,
-        sqrtAlpha,
-        sqrtBeta
-    );
-    const invariant = _calculateQuadratic(a, mb, bSquare, mc);
-    return invariant;
-}
-function _calculateQuadraticTerms(balances, sqrtAlpha, sqrtBeta) {
-    const a = constants.WeiPerEther.sub(divDown$1(sqrtAlpha, sqrtBeta));
-    const bterm0 = divDown$1(balances[1], sqrtBeta);
-    const bterm1 = mulDown$1(balances[0], sqrtAlpha);
-    const mb = bterm0.add(bterm1);
-    const mc = mulDown$1(balances[0], balances[1]);
-    // For better fixed point precision, calculate in expanded form w/ re-ordering of multiplications
-    // b^2 = x^2 * alpha + x*y*2*sqrt(alpha/beta) + y^2 / beta
-    let bSquare = mulDown$1(
-        mulDown$1(mulDown$1(balances[0], balances[0]), sqrtAlpha),
-        sqrtAlpha
-    );
-    const bSq2 = divDown$1(
-        mulDown$1(
-            mulDown$1(
-                mulDown$1(balances[0], balances[1]),
-                constants.WeiPerEther.mul(2)
-            ),
-            sqrtAlpha
-        ),
-        sqrtBeta
-    );
-    const bSq3 = divDown$1(
-        mulDown$1(balances[1], balances[1]),
-        mulUp$1(sqrtBeta, sqrtBeta)
-    );
-    bSquare = bSquare.add(bSq2).add(bSq3);
-    return [a, mb, bSquare, mc];
-}
-function _calculateQuadratic(a, mb, bSquare, mc) {
-    const denominator = mulUp$1(a, constants.WeiPerEther.mul(2));
-    // order multiplications for fixed point precision
-    const addTerm = mulDown$1(mulDown$1(mc, constants.WeiPerEther.mul(4)), a);
-    // The minus sign in the radicand cancels out in this special case, so we add
-    const radicand = bSquare.add(addTerm);
-    const sqrResult = _sqrt(radicand, bignumber.BigNumber.from(5));
-    // The minus sign in the numerator cancels out in this special case
-    const numerator = mb.add(sqrResult);
-    const invariant = divDown$1(numerator, denominator);
-    return invariant;
-}
-/////////
-/// Swap functions
-/////////
-// SwapType = 'swapExactIn'
-function _calcOutGivenIn$1(
-    balanceIn,
-    balanceOut,
-    amountIn,
-    virtualParamIn,
-    virtualParamOut
-) {
-    /**********************************************************************************************
-        // Described for X = `in' asset and Y = `out' asset, but equivalent for the other case       //
-        // dX = incrX  = amountIn  > 0                                                               //
-        // dY = incrY = amountOut < 0                                                                //
-        // x = balanceIn             x' = x +  virtualParamX                                         //
-        // y = balanceOut            y' = y +  virtualParamY                                         //
-        // L  = inv.Liq                   /              L^2            \                            //
-        //                   - dy = y' - |   --------------------------  |                           //
-        //  x' = virtIn                   \          ( x' + dX)         /                            //
-        //  y' = virtOut                                                                             //
-        // Note that -dy > 0 is what the trader receives.                                            //
-        // We exploit the fact that this formula is symmetric up to virtualParam{X,Y}.               //
-        **********************************************************************************************/
-    // The factors in total lead to a multiplicative "safety margin" between the employed virtual offsets
-    // very slightly larger than 3e-18.
-    const virtInOver = balanceIn.add(
-        mulUp$1(virtualParamIn, constants.WeiPerEther.add(2))
-    );
-    const virtOutUnder = balanceOut.add(
-        mulDown$1(virtualParamOut, constants.WeiPerEther.sub(1))
-    );
-    const amountOut = divDown$1(
-        mulDown$1(virtOutUnder, amountIn),
-        virtInOver.add(amountIn)
-    );
-    if (amountOut.gt(balanceOut)) throw new Error('ASSET_BOUNDS_EXCEEDED');
-    return amountOut;
-}
-// SwapType = 'swapExactOut'
-function _calcInGivenOut$1(
-    balanceIn,
-    balanceOut,
-    amountOut,
-    virtualParamIn,
-    virtualParamOut
-) {
-    /**********************************************************************************************
-      // dX = incrX  = amountIn  > 0                                                               //
-      // dY = incrY  = amountOut < 0                                                               //
-      // x = balanceIn             x' = x +  virtualParamX                                         //
-      // y = balanceOut            y' = y +  virtualParamY                                         //
-      // x = balanceIn                                                                             //
-      // L  = inv.Liq                /              L^2             \                              //
-      //                     dx =   |   --------------------------  |  -  x'                       //
-      // x' = virtIn                \         ( y' + dy)           /                               //
-      // y' = virtOut                                                                              //
-      // Note that dy < 0 < dx.                                                                    //
-      **********************************************************************************************/
-    if (amountOut.gt(balanceOut)) throw new Error('ASSET_BOUNDS_EXCEEDED');
-    // The factors in total lead to a multiplicative "safety margin" between the employed virtual offsets
-    // very slightly larger than 3e-18.
-    const virtInOver = balanceIn.add(
-        mulUp$1(virtualParamIn, constants.WeiPerEther.add(2))
-    );
-    const virtOutUnder = balanceOut.add(
-        mulDown$1(virtualParamOut, constants.WeiPerEther.sub(1))
-    );
-    const amountIn = divUp$1(
-        mulUp$1(virtInOver, amountOut),
-        virtOutUnder.sub(amountOut)
-    );
-    return amountIn;
-}
-// /////////
-// ///  Spot price function
-// /////////
-function _calculateNewSpotPrice$1(
-    balances,
-    inAmount,
-    outAmount,
-    virtualParamIn,
-    virtualParamOut,
-    swapFee
-) {
-    /**********************************************************************************************
-        // dX = incrX  = amountIn  > 0                                                               //
-        // dY = incrY  = amountOut < 0                                                               //
-        // x = balanceIn             x' = x +  virtualParamX                                         //
-        // y = balanceOut            y' = y +  virtualParamY                                         //
-        // s = swapFee                                                                               //
-        // L  = inv.Liq                1   /     x' + (1 - s) * dx        \                          //
-        //                     p_y =  --- |   --------------------------  |                          //
-        // x' = virtIn                1-s  \         y' + dy              /                          //
-        // y' = virtOut                                                                              //
-        // Note that dy < 0 < dx.                                                                    //
-        **********************************************************************************************/
-    const afterFeeMultiplier = constants.WeiPerEther.sub(swapFee); // 1 - s
-    const virtIn = balances[0].add(virtualParamIn); // x + virtualParamX = x'
-    const numerator = virtIn.add(mulDown$1(afterFeeMultiplier, inAmount)); // x' + (1 - s) * dx
-    const virtOut = balances[1].add(virtualParamOut); // y + virtualParamY = y'
-    const denominator = mulDown$1(afterFeeMultiplier, virtOut.sub(outAmount)); // (1 - s) * (y' + dy)
-    const newSpotPrice = divDown$1(numerator, denominator);
-    return newSpotPrice;
-}
-// /////////
-// ///  Derivatives of spotPriceAfterSwap
-// /////////
-// SwapType = 'swapExactIn'
-function _derivativeSpotPriceAfterSwapExactTokenInForTokenOut$1(
-    balances,
-    outAmount,
-    virtualParamOut
-) {
-    /**********************************************************************************************
-        // dy = incrY  = amountOut < 0                                                               //
-                                                                                                     //
-        // y = balanceOut            y' = y +  virtualParamY = virtOut                               //
-        //                                                                                           //
-        //                                 /              1               \                          //
-        //                  (p_y)' =   2  |   --------------------------  |                          //
-        //                                 \           y' + dy            /                          //
-        //                                                                                           //
-        // Note that dy < 0                                                                          //
-        **********************************************************************************************/
-    const TWO = bignumber.BigNumber.from(2).mul(constants.WeiPerEther);
-    const virtOut = balances[1].add(virtualParamOut); // y' = y + virtualParamY
-    const denominator = virtOut.sub(outAmount); // y' + dy
-    const derivative = divDown$1(TWO, denominator);
-    return derivative;
-}
-// SwapType = 'swapExactOut'
-function _derivativeSpotPriceAfterSwapTokenInForExactTokenOut$1(
-    balances,
-    inAmount,
-    outAmount,
-    virtualParamIn,
-    virtualParamOut,
-    swapFee
-) {
-    /**********************************************************************************************
-        // dX = incrX  = amountIn  > 0                                                               //
-        // dY = incrY  = amountOut < 0                                                               //
-        // x = balanceIn             x' = x +  virtualParamX                                         //
-        // y = balanceOut            y' = y +  virtualParamY                                         //
-        // s = swapFee                                                                               //
-        // L  = inv.Liq                1       /     x' + (1 - s) * dx        \                      //
-        //                     p_y =  --- (2) |   --------------------------  |                      //
-        // x' = virtIn                1-s      \         (y' + dy)^2          /                      //
-        // y' = virtOut                                                                              //
-        // Note that dy < 0 < dx.                                                                    //
-        **********************************************************************************************/
-    const TWO = bignumber.BigNumber.from(2).mul(constants.WeiPerEther);
-    const afterFeeMultiplier = constants.WeiPerEther.sub(swapFee); // 1 - s
-    const virtIn = balances[0].add(virtualParamIn); // x + virtualParamX = x'
-    const numerator = virtIn.add(mulDown$1(afterFeeMultiplier, inAmount)); // x' + (1 - s) * dx
-    const virtOut = balances[1].add(virtualParamOut); // y + virtualParamY = y'
-    const denominator = mulDown$1(
-        virtOut.sub(outAmount),
-        virtOut.sub(outAmount)
-    ); // (y' + dy)^2
-    const factor = divDown$1(TWO, afterFeeMultiplier); // 2 / (1 - s)
-    const derivative = mulDown$1(factor, divDown$1(numerator, denominator));
-    return derivative;
-}
-// /////////
-// ///  Normalized Liquidity measured with respect to the in-asset.
-// /////////
-function _getNormalizedLiquidity$1(balances, virtualParamOut) {
-    /**********************************************************************************************
-    // x = balanceOut             x' = x +  virtualParamOut                                      //
-    // s = swapFee                                                                               //
-    //                                                                                           //
-    //                             normalizedLiquidity =  0.5 * x'                               //
-    //                                                                                           //
-    // x' = virtOut                                                                              //
-    // Note that balances = [balanceIn, balanceOut].                                             //
-    **********************************************************************************************/
-    const virtOut = balances[1].add(virtualParamOut);
-    return virtOut.div(2);
-}
-
-class Gyro2Pool {
-    constructor(
-        id,
-        address,
-        swapFee,
-        totalShares,
-        tokens,
-        tokensList,
-        sqrtAlpha,
-        sqrtBeta
-    ) {
-        this.poolType = exports.PoolTypes.Gyro2;
-        // Max In/Out Ratios
-        this.MAX_IN_RATIO = bignumber.parseFixed('0.3', 18);
-        this.MAX_OUT_RATIO = bignumber.parseFixed('0.3', 18);
-        this.id = id;
-        this.address = address;
-        this.swapFee = bignumber.parseFixed(swapFee, 18);
-        this.totalShares = bignumber.parseFixed(totalShares, 18);
-        this.tokens = tokens;
-        this.tokensList = tokensList;
-        this.sqrtAlpha = bignumber.parseFixed(sqrtAlpha, 18);
-        this.sqrtBeta = bignumber.parseFixed(sqrtBeta, 18);
-    }
-    static fromPool(pool) {
-        if (!pool.sqrtAlpha || !pool.sqrtBeta)
-            throw new Error(
-                'Pool missing Gyro2 sqrtAlpha and/or sqrtBeta params'
-            );
-        return new Gyro2Pool(
-            pool.id,
-            pool.address,
-            pool.swapFee,
-            pool.totalShares,
-            pool.tokens,
-            pool.tokensList,
-            pool.sqrtAlpha,
-            pool.sqrtBeta
-        );
-    }
-    parsePoolPairData(tokenIn, tokenOut) {
-        const tokenInIndex = this.tokens.findIndex(
-            (t) => address.getAddress(t.address) === address.getAddress(tokenIn)
-        );
-        if (tokenInIndex < 0) throw 'Pool does not contain tokenIn';
-        const tI = this.tokens[tokenInIndex];
-        const balanceIn = tI.balance;
-        const decimalsIn = tI.decimals;
-        const tokenOutIndex = this.tokens.findIndex(
-            (t) =>
-                address.getAddress(t.address) === address.getAddress(tokenOut)
-        );
-        if (tokenOutIndex < 0) throw 'Pool does not contain tokenOut';
-        const tO = this.tokens[tokenOutIndex];
-        const balanceOut = tO.balance;
-        const decimalsOut = tO.decimals;
-        const tokenInIsToken0 = tokenInIndex === 0;
-        const poolPairData = {
-            id: this.id,
-            address: this.address,
-            poolType: this.poolType,
-            tokenIn: tokenIn,
-            tokenOut: tokenOut,
-            decimalsIn: Number(decimalsIn),
-            decimalsOut: Number(decimalsOut),
-            balanceIn: bignumber.parseFixed(balanceIn, decimalsIn),
-            balanceOut: bignumber.parseFixed(balanceOut, decimalsOut),
-            swapFee: this.swapFee,
-            sqrtAlpha: tokenInIsToken0
-                ? this.sqrtAlpha
-                : divDown$1(constants.WeiPerEther, this.sqrtBeta),
-            sqrtBeta: tokenInIsToken0
-                ? this.sqrtBeta
-                : divDown$1(constants.WeiPerEther, this.sqrtAlpha),
-        };
-        return poolPairData;
-    }
-    getNormalizedLiquidity(poolPairData) {
-        const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
-        const normalizedBalances = _normalizeBalances$1(
-            balances,
-            poolPairData.decimalsIn,
-            poolPairData.decimalsOut
-        );
-        const invariant = _calculateInvariant$1(
-            normalizedBalances,
-            poolPairData.sqrtAlpha,
-            poolPairData.sqrtBeta
-        );
-        const [, virtualParamOut] = _findVirtualParams(
-            invariant,
-            poolPairData.sqrtAlpha,
-            poolPairData.sqrtBeta
-        );
-        const normalisedLiquidity = _getNormalizedLiquidity$1(
-            normalizedBalances,
-            virtualParamOut
-        );
-        return bnum(bignumber.formatFixed(normalisedLiquidity, 18));
-    }
-    getLimitAmountSwap(poolPairData, swapType) {
-        if (swapType === exports.SwapTypes.SwapExactIn) {
-            return bnum(
-                bignumber.formatFixed(
-                    mulDown$1(poolPairData.balanceIn, this.MAX_IN_RATIO),
-                    poolPairData.decimalsIn
-                )
-            );
-        } else {
-            return bnum(
-                bignumber.formatFixed(
-                    mulDown$1(poolPairData.balanceOut, this.MAX_OUT_RATIO),
-                    poolPairData.decimalsOut
-                )
-            );
-        }
-    }
-    // Updates the balance of a given token for the pool
-    updateTokenBalanceForPool(token, newBalance) {
-        // token is BPT
-        if (this.address == token) {
-            this.totalShares = newBalance;
-        } else {
-            // token is underlying in the pool
-            const T = this.tokens.find((t) => isSameAddress(t.address, token));
-            if (!T) throw Error('Pool does not contain this token');
-            T.balance = bignumber.formatFixed(newBalance, T.decimals);
-        }
-    }
-    _exactTokenInForTokenOut(poolPairData, amount) {
-        try {
-            const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
-            const normalizedBalances = _normalizeBalances$1(
-                balances,
-                poolPairData.decimalsIn,
-                poolPairData.decimalsOut
-            );
-            const invariant = _calculateInvariant$1(
-                normalizedBalances,
-                poolPairData.sqrtAlpha,
-                poolPairData.sqrtBeta
-            );
-            const [virtualParamIn, virtualParamOut] = _findVirtualParams(
-                invariant,
-                poolPairData.sqrtAlpha,
-                poolPairData.sqrtBeta
-            );
-            const inAmount = bignumber.parseFixed(amount.toString(), 18);
-            const inAmountLessFee = _reduceFee$1(
-                inAmount,
-                poolPairData.swapFee
-            );
-            const outAmount = _calcOutGivenIn$1(
-                normalizedBalances[0],
-                normalizedBalances[1],
-                inAmountLessFee,
-                virtualParamIn,
-                virtualParamOut
-            );
-            return bnum(bignumber.formatFixed(outAmount, 18));
-        } catch (error) {
-            return bnum(0);
-        }
-    }
-    _tokenInForExactTokenOut(poolPairData, amount) {
-        try {
-            const outAmount = bignumber.parseFixed(amount.toString(), 18);
-            const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
-            const normalizedBalances = _normalizeBalances$1(
-                balances,
-                poolPairData.decimalsIn,
-                poolPairData.decimalsOut
-            );
-            const invariant = _calculateInvariant$1(
-                normalizedBalances,
-                poolPairData.sqrtAlpha,
-                poolPairData.sqrtBeta
-            );
-            const [virtualParamIn, virtualParamOut] = _findVirtualParams(
-                invariant,
-                poolPairData.sqrtAlpha,
-                poolPairData.sqrtBeta
-            );
-            const inAmountLessFee = _calcInGivenOut$1(
-                normalizedBalances[0],
-                normalizedBalances[1],
-                outAmount,
-                virtualParamIn,
-                virtualParamOut
-            );
-            const inAmount = _addFee$1(inAmountLessFee, poolPairData.swapFee);
-            return bnum(bignumber.formatFixed(inAmount, 18));
-        } catch (error) {
-            return bnum(0);
-        }
-    }
-    _spotPriceAfterSwapExactTokenInForTokenOut(poolPairData, amount) {
-        try {
-            const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
-            const normalizedBalances = _normalizeBalances$1(
-                balances,
-                poolPairData.decimalsIn,
-                poolPairData.decimalsOut
-            );
-            const invariant = _calculateInvariant$1(
-                normalizedBalances,
-                poolPairData.sqrtAlpha,
-                poolPairData.sqrtBeta
-            );
-            const [virtualParamIn, virtualParamOut] = _findVirtualParams(
-                invariant,
-                poolPairData.sqrtAlpha,
-                poolPairData.sqrtBeta
-            );
-            const inAmount = bignumber.parseFixed(amount.toString(), 18);
-            const inAmountLessFee = _reduceFee$1(
-                inAmount,
-                poolPairData.swapFee
-            );
-            const outAmount = _calcOutGivenIn$1(
-                normalizedBalances[0],
-                normalizedBalances[1],
-                inAmountLessFee,
-                virtualParamIn,
-                virtualParamOut
-            );
-            const newSpotPrice = _calculateNewSpotPrice$1(
-                normalizedBalances,
-                inAmount,
-                outAmount,
-                virtualParamIn,
-                virtualParamOut,
-                poolPairData.swapFee
-            );
-            return bnum(bignumber.formatFixed(newSpotPrice, 18));
-        } catch (error) {
-            return bnum(0);
-        }
-    }
-    _spotPriceAfterSwapTokenInForExactTokenOut(poolPairData, amount) {
-        try {
-            const outAmount = bignumber.parseFixed(amount.toString(), 18);
-            const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
-            const normalizedBalances = _normalizeBalances$1(
-                balances,
-                poolPairData.decimalsIn,
-                poolPairData.decimalsOut
-            );
-            const invariant = _calculateInvariant$1(
-                normalizedBalances,
-                poolPairData.sqrtAlpha,
-                poolPairData.sqrtBeta
-            );
-            const [virtualParamIn, virtualParamOut] = _findVirtualParams(
-                invariant,
-                poolPairData.sqrtAlpha,
-                poolPairData.sqrtBeta
-            );
-            const inAmountLessFee = _calcInGivenOut$1(
-                normalizedBalances[0],
-                normalizedBalances[1],
-                outAmount,
-                virtualParamIn,
-                virtualParamOut
-            );
-            const inAmount = _addFee$1(inAmountLessFee, poolPairData.swapFee);
-            const newSpotPrice = _calculateNewSpotPrice$1(
-                normalizedBalances,
-                inAmount,
-                outAmount,
-                virtualParamIn,
-                virtualParamOut,
-                poolPairData.swapFee
-            );
-            return bnum(bignumber.formatFixed(newSpotPrice, 18));
-        } catch (error) {
-            return bnum(0);
-        }
-    }
-    _derivativeSpotPriceAfterSwapExactTokenInForTokenOut(poolPairData, amount) {
-        const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
-        const normalizedBalances = _normalizeBalances$1(
-            balances,
-            poolPairData.decimalsIn,
-            poolPairData.decimalsOut
-        );
-        const invariant = _calculateInvariant$1(
-            normalizedBalances,
-            poolPairData.sqrtAlpha,
-            poolPairData.sqrtBeta
-        );
-        const [virtualParamIn, virtualParamOut] = _findVirtualParams(
-            invariant,
-            poolPairData.sqrtAlpha,
-            poolPairData.sqrtBeta
-        );
-        const inAmount = bignumber.parseFixed(amount.toString(), 18);
-        const inAmountLessFee = _reduceFee$1(inAmount, poolPairData.swapFee);
-        const outAmount = _calcOutGivenIn$1(
-            normalizedBalances[0],
-            normalizedBalances[1],
-            inAmountLessFee,
-            virtualParamIn,
-            virtualParamOut
-        );
-        const derivative =
-            _derivativeSpotPriceAfterSwapExactTokenInForTokenOut$1(
-                normalizedBalances,
-                outAmount,
-                virtualParamOut
-            );
-        return bnum(bignumber.formatFixed(derivative, 18));
-    }
-    _derivativeSpotPriceAfterSwapTokenInForExactTokenOut(poolPairData, amount) {
-        const outAmount = bignumber.parseFixed(amount.toString(), 18);
-        const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
-        const normalizedBalances = _normalizeBalances$1(
-            balances,
-            poolPairData.decimalsIn,
-            poolPairData.decimalsOut
-        );
-        const invariant = _calculateInvariant$1(
-            normalizedBalances,
-            poolPairData.sqrtAlpha,
-            poolPairData.sqrtBeta
-        );
-        const [virtualParamIn, virtualParamOut] = _findVirtualParams(
-            invariant,
-            poolPairData.sqrtAlpha,
-            poolPairData.sqrtBeta
-        );
-        const inAmountLessFee = _calcInGivenOut$1(
-            normalizedBalances[0],
-            normalizedBalances[1],
-            outAmount,
-            virtualParamIn,
-            virtualParamOut
-        );
-        const inAmount = _addFee$1(inAmountLessFee, poolPairData.swapFee);
-        const derivative =
-            _derivativeSpotPriceAfterSwapTokenInForExactTokenOut$1(
-                normalizedBalances,
-                inAmount,
-                outAmount,
-                virtualParamIn,
-                virtualParamOut,
-                poolPairData.swapFee
-            );
-        return bnum(bignumber.formatFixed(derivative, 18));
-    }
-}
-
-// Swap limits: amounts swapped may not be larger than this percentage of total balance.
-bignumber.parseFixed('0.3', 18);
-bignumber.parseFixed('0.3', 18);
 // SQRT constants
 const SQRT_1E_NEG_1 = bignumber.BigNumber.from('316227766016837933');
 const SQRT_1E_NEG_3 = bignumber.BigNumber.from('31622776601683793');
@@ -11910,20 +11496,16 @@ const SQRT_1E_NEG_11 = bignumber.BigNumber.from('3162277660168');
 const SQRT_1E_NEG_13 = bignumber.BigNumber.from('316227766016');
 const SQRT_1E_NEG_15 = bignumber.BigNumber.from('31622776601');
 const SQRT_1E_NEG_17 = bignumber.BigNumber.from('3162277660');
-// POW3 constant
-// Threshold of x where the normal method of computing x^3 would overflow and we need a workaround.
-// Equal to 4.87e13 scaled; 4.87e13 is the point x where x**3 * 10**36 = (x**2 native) * (x native) ~ 2**256
-const _SAFE_LARGE_POW3_THRESHOLD = bignumber.BigNumber.from(10)
-    .pow(29)
-    .mul(487);
-const MIDDECIMAL = bignumber.BigNumber.from(10).pow(9); // splits the fixed point decimals into two equal parts.
-// Stopping criterion for the Newton iteration that computes the invariant:
-// - Stop if the step width doesn't shrink anymore by at least a factor _INVARIANT_SHRINKING_FACTOR_PER_STEP.
-// - ... but in any case, make at least _INVARIANT_MIN_ITERATIONS iterations. This is useful to compensate for a
-// less-than-ideal starting point, which is important when alpha is small.
-const _INVARIANT_SHRINKING_FACTOR_PER_STEP = 8;
-const _INVARIANT_MIN_ITERATIONS = 5;
+// High precision
+const ONE_XP = bignumber.BigNumber.from(10).pow(38); // 38 decimal places
+// Small number to prevent rounding errors
+const SMALL = bignumber.BigNumber.from(10).pow(8); // 1e-10 in normal precision
+// Swap Limit factor
+const SWAP_LIMIT_FACTOR = bignumber.BigNumber.from('999999000000000000');
 
+/////////
+/// ARITHMETIC HELPERS
+/////////
 function mulUp(a, b) {
     const product = a.mul(b);
     return product.sub(1).div(constants.WeiPerEther).add(1);
@@ -11940,17 +11522,77 @@ function divDown(a, b) {
     const aInflated = a.mul(constants.WeiPerEther);
     return aInflated.div(b);
 }
-function newtonSqrt(input, tolerance) {
+function mulXpU(a, b) {
+    return a.mul(b).div(ONE_XP);
+}
+function divXpU(a, b) {
+    if (b.isZero()) throw new Error('ZERO DIVISION');
+    return a.mul(ONE_XP).div(b);
+}
+function mulDownMagU(a, b) {
+    return a.mul(b).div(constants.WeiPerEther);
+}
+function divDownMagU(a, b) {
+    if (b.isZero()) throw new Error('ZERO DIVISION');
+    return a.mul(constants.WeiPerEther).div(b);
+}
+function mulUpMagU(a, b) {
+    const product = a.mul(b);
+    if (product.gt(0)) return product.sub(1).div(constants.WeiPerEther).add(1);
+    else if (product.lt(0))
+        return product.add(1).div(constants.WeiPerEther).sub(1);
+    else return bignumber.BigNumber.from(0);
+}
+function divUpMagU(a, b) {
+    if (b.isZero()) throw new Error('ZERO DIVISION');
+    if (b.lt(0)) {
+        b = b.mul(-1);
+        a = a.mul(-1);
+    }
+    if (a.isZero()) {
+        return bignumber.BigNumber.from(0);
+    } else {
+        if (a.gt(0)) return a.mul(constants.WeiPerEther).sub(1).div(b).add(1);
+        else return a.mul(constants.WeiPerEther).add(1).div(b.sub(1));
+    }
+}
+function mulUpXpToNpU(a, b) {
+    const TenPower19 = bignumber.BigNumber.from(10).pow(19);
+    const b1 = b.div(TenPower19);
+    const b2 = b.isNegative()
+        ? b.mul(-1).mod(TenPower19).mul(-1)
+        : b.mod(TenPower19);
+    const prod1 = a.mul(b1);
+    const prod2 = a.mul(b2);
+    return prod1.lte(0) && prod2.lte(0)
+        ? prod1.add(prod2.div(TenPower19)).div(TenPower19)
+        : prod1.add(prod2.div(TenPower19)).sub(1).div(TenPower19).add(1);
+}
+function mulDownXpToNpU(a, b) {
+    const TenPower19 = bignumber.BigNumber.from(10).pow(19);
+    const b1 = b.div(TenPower19);
+    const b2 = b.isNegative()
+        ? b.mul(-1).mod(TenPower19).mul(-1)
+        : b.mod(TenPower19);
+    const prod1 = a.mul(b1);
+    const prod2 = a.mul(b2);
+    return prod1.gte(0) && prod2.gte(0)
+        ? prod1.add(prod2.div(TenPower19)).div(TenPower19)
+        : prod1.add(prod2.div(TenPower19)).add(1).div(TenPower19).sub(1);
+}
+/////////
+/// SQUARE ROOT
+/////////
+function sqrt(input, tolerance) {
     if (input.isZero()) {
         return bignumber.BigNumber.from(0);
     }
-    let guess = _makeInitialGuess(input);
+    let guess = makeInitialGuess(input);
     // 7 iterations
     for (let i of new Array(7).fill(0)) {
         guess = guess.add(input.mul(constants.WeiPerEther).div(guess)).div(2);
     }
-    // Check in some epsilon range
-    // Check square is more or less correct
+    // Check square is more or less correct (in some epsilon range)
     const guessSquared = guess.mul(guess).div(constants.WeiPerEther);
     if (
         !(
@@ -11958,13 +11600,13 @@ function newtonSqrt(input, tolerance) {
             guessSquared.gte(input.sub(mulUp(guess, tolerance)))
         )
     )
-        throw new Error('Gyro3Pool: newtonSqrt failed');
+        throw new Error('GyroEPool: sqrt failed');
     return guess;
 }
-function _makeInitialGuess(input) {
+function makeInitialGuess(input) {
     if (input.gte(constants.WeiPerEther)) {
         return bignumber.BigNumber.from(2)
-            .pow(_intLog2Halved(input.div(constants.WeiPerEther)))
+            .pow(intLog2Halved(input.div(constants.WeiPerEther)))
             .mul(constants.WeiPerEther);
     } else {
         if (input.lte('10')) {
@@ -12021,7 +11663,7 @@ function _makeInitialGuess(input) {
         return input;
     }
 }
-function _intLog2Halved(x) {
+function intLog2Halved(x) {
     let n = 0;
     for (let i = 128; i >= 2; i = i / 2) {
         const factor = bignumber.BigNumber.from(2).pow(i);
@@ -12032,6 +11674,664 @@ function _intLog2Halved(x) {
     }
     return n;
 }
+
+/////////
+/// Virtual Parameter calculations
+/////////
+function _findVirtualParams(invariant, sqrtAlpha, sqrtBeta) {
+    return [divDown(invariant, sqrtBeta), mulDown(invariant, sqrtAlpha)];
+}
+/////////
+/// Invariant Calculation
+/////////
+function _calculateInvariant$1(
+    balances, // balances
+    sqrtAlpha,
+    sqrtBeta
+) {
+    /**********************************************************************************************
+        // Calculate with quadratic formula
+        // 0 = (1-sqrt(alpha/beta)*L^2 - (y/sqrt(beta)+x*sqrt(alpha))*L - x*y)
+        // 0 = a*L^2 + b*L + c
+        // here a > 0, b < 0, and c < 0, which is a special case that works well w/o negative numbers
+        // taking mb = -b and mc = -c:                            (1/2)
+        //                                  mb + (mb^2 + 4 * a * mc)^                   //
+        //                   L =    ------------------------------------------          //
+        //                                          2 * a                               //
+        //                                                                              //
+        **********************************************************************************************/
+    const [a, mb, bSquare, mc] = _calculateQuadraticTerms(
+        balances,
+        sqrtAlpha,
+        sqrtBeta
+    );
+    const invariant = _calculateQuadratic(a, mb, bSquare, mc);
+    return invariant;
+}
+function _calculateQuadraticTerms(balances, sqrtAlpha, sqrtBeta) {
+    const a = constants.WeiPerEther.sub(divDown(sqrtAlpha, sqrtBeta));
+    const bterm0 = divDown(balances[1], sqrtBeta);
+    const bterm1 = mulDown(balances[0], sqrtAlpha);
+    const mb = bterm0.add(bterm1);
+    const mc = mulDown(balances[0], balances[1]);
+    // For better fixed point precision, calculate in expanded form w/ re-ordering of multiplications
+    // b^2 = x^2 * alpha + x*y*2*sqrt(alpha/beta) + y^2 / beta
+    let bSquare = mulDown(
+        mulDown(mulDown(balances[0], balances[0]), sqrtAlpha),
+        sqrtAlpha
+    );
+    const bSq2 = divDown(
+        mulDown(
+            mulDown(
+                mulDown(balances[0], balances[1]),
+                constants.WeiPerEther.mul(2)
+            ),
+            sqrtAlpha
+        ),
+        sqrtBeta
+    );
+    const bSq3 = divDown(
+        mulDown(balances[1], balances[1]),
+        mulUp(sqrtBeta, sqrtBeta)
+    );
+    bSquare = bSquare.add(bSq2).add(bSq3);
+    return [a, mb, bSquare, mc];
+}
+function _calculateQuadratic(a, mb, bSquare, mc) {
+    const denominator = mulUp(a, constants.WeiPerEther.mul(2));
+    // order multiplications for fixed point precision
+    const addTerm = mulDown(mulDown(mc, constants.WeiPerEther.mul(4)), a);
+    // The minus sign in the radicand cancels out in this special case, so we add
+    const radicand = bSquare.add(addTerm);
+    const sqrResult = sqrt(radicand, bignumber.BigNumber.from(5));
+    // The minus sign in the numerator cancels out in this special case
+    const numerator = mb.add(sqrResult);
+    const invariant = divDown(numerator, denominator);
+    return invariant;
+}
+/////////
+/// Swap functions
+/////////
+// SwapType = 'swapExactIn'
+function _calcOutGivenIn$1(
+    balanceIn,
+    balanceOut,
+    amountIn,
+    virtualParamIn,
+    virtualParamOut
+) {
+    /**********************************************************************************************
+        // Described for X = `in' asset and Y = `out' asset, but equivalent for the other case       //
+        // dX = incrX  = amountIn  > 0                                                               //
+        // dY = incrY = amountOut < 0                                                                //
+        // x = balanceIn             x' = x +  virtualParamX                                         //
+        // y = balanceOut            y' = y +  virtualParamY                                         //
+        // L  = inv.Liq                   /              L^2            \                            //
+        //                   - dy = y' - |   --------------------------  |                           //
+        //  x' = virtIn                   \          ( x' + dX)         /                            //
+        //  y' = virtOut                                                                             //
+        // Note that -dy > 0 is what the trader receives.                                            //
+        // We exploit the fact that this formula is symmetric up to virtualParam{X,Y}.               //
+        **********************************************************************************************/
+    // The factors in total lead to a multiplicative "safety margin" between the employed virtual offsets
+    // very slightly larger than 3e-18.
+    const virtInOver = balanceIn.add(
+        mulUp(virtualParamIn, constants.WeiPerEther.add(2))
+    );
+    const virtOutUnder = balanceOut.add(
+        mulDown(virtualParamOut, constants.WeiPerEther.sub(1))
+    );
+    const amountOut = divDown(
+        mulDown(virtOutUnder, amountIn),
+        virtInOver.add(amountIn)
+    );
+    if (amountOut.gt(balanceOut)) throw new Error('ASSET_BOUNDS_EXCEEDED');
+    return amountOut;
+}
+// SwapType = 'swapExactOut'
+function _calcInGivenOut$1(
+    balanceIn,
+    balanceOut,
+    amountOut,
+    virtualParamIn,
+    virtualParamOut
+) {
+    /**********************************************************************************************
+      // dX = incrX  = amountIn  > 0                                                               //
+      // dY = incrY  = amountOut < 0                                                               //
+      // x = balanceIn             x' = x +  virtualParamX                                         //
+      // y = balanceOut            y' = y +  virtualParamY                                         //
+      // x = balanceIn                                                                             //
+      // L  = inv.Liq                /              L^2             \                              //
+      //                     dx =   |   --------------------------  |  -  x'                       //
+      // x' = virtIn                \         ( y' + dy)           /                               //
+      // y' = virtOut                                                                              //
+      // Note that dy < 0 < dx.                                                                    //
+      **********************************************************************************************/
+    if (amountOut.gt(balanceOut)) throw new Error('ASSET_BOUNDS_EXCEEDED');
+    // The factors in total lead to a multiplicative "safety margin" between the employed virtual offsets
+    // very slightly larger than 3e-18.
+    const virtInOver = balanceIn.add(
+        mulUp(virtualParamIn, constants.WeiPerEther.add(2))
+    );
+    const virtOutUnder = balanceOut.add(
+        mulDown(virtualParamOut, constants.WeiPerEther.sub(1))
+    );
+    const amountIn = divUp(
+        mulUp(virtInOver, amountOut),
+        virtOutUnder.sub(amountOut)
+    );
+    return amountIn;
+}
+// /////////
+// ///  Spot price function
+// /////////
+function _calculateNewSpotPrice$1(
+    balances,
+    inAmount,
+    outAmount,
+    virtualParamIn,
+    virtualParamOut,
+    swapFee
+) {
+    /**********************************************************************************************
+        // dX = incrX  = amountIn  > 0                                                               //
+        // dY = incrY  = amountOut < 0                                                               //
+        // x = balanceIn             x' = x +  virtualParamX                                         //
+        // y = balanceOut            y' = y +  virtualParamY                                         //
+        // s = swapFee                                                                               //
+        // L  = inv.Liq                1   /     x' + (1 - s) * dx        \                          //
+        //                     p_y =  --- |   --------------------------  |                          //
+        // x' = virtIn                1-s  \         y' + dy              /                          //
+        // y' = virtOut                                                                              //
+        // Note that dy < 0 < dx.                                                                    //
+        **********************************************************************************************/
+    const afterFeeMultiplier = constants.WeiPerEther.sub(swapFee); // 1 - s
+    const virtIn = balances[0].add(virtualParamIn); // x + virtualParamX = x'
+    const numerator = virtIn.add(mulDown(afterFeeMultiplier, inAmount)); // x' + (1 - s) * dx
+    const virtOut = balances[1].add(virtualParamOut); // y + virtualParamY = y'
+    const denominator = mulDown(afterFeeMultiplier, virtOut.sub(outAmount)); // (1 - s) * (y' + dy)
+    const newSpotPrice = divDown(numerator, denominator);
+    return newSpotPrice;
+}
+// /////////
+// ///  Derivatives of spotPriceAfterSwap
+// /////////
+// SwapType = 'swapExactIn'
+function _derivativeSpotPriceAfterSwapExactTokenInForTokenOut$1(
+    balances,
+    outAmount,
+    virtualParamOut
+) {
+    /**********************************************************************************************
+        // dy = incrY  = amountOut < 0                                                               //
+                                                                                                     //
+        // y = balanceOut            y' = y +  virtualParamY = virtOut                               //
+        //                                                                                           //
+        //                                 /              1               \                          //
+        //                  (p_y)' =   2  |   --------------------------  |                          //
+        //                                 \           y' + dy            /                          //
+        //                                                                                           //
+        // Note that dy < 0                                                                          //
+        **********************************************************************************************/
+    const TWO = bignumber.BigNumber.from(2).mul(constants.WeiPerEther);
+    const virtOut = balances[1].add(virtualParamOut); // y' = y + virtualParamY
+    const denominator = virtOut.sub(outAmount); // y' + dy
+    const derivative = divDown(TWO, denominator);
+    return derivative;
+}
+// SwapType = 'swapExactOut'
+function _derivativeSpotPriceAfterSwapTokenInForExactTokenOut$1(
+    balances,
+    inAmount,
+    outAmount,
+    virtualParamIn,
+    virtualParamOut,
+    swapFee
+) {
+    /**********************************************************************************************
+        // dX = incrX  = amountIn  > 0                                                               //
+        // dY = incrY  = amountOut < 0                                                               //
+        // x = balanceIn             x' = x +  virtualParamX                                         //
+        // y = balanceOut            y' = y +  virtualParamY                                         //
+        // s = swapFee                                                                               //
+        // L  = inv.Liq                1       /     x' + (1 - s) * dx        \                      //
+        //                     p_y =  --- (2) |   --------------------------  |                      //
+        // x' = virtIn                1-s      \         (y' + dy)^2          /                      //
+        // y' = virtOut                                                                              //
+        // Note that dy < 0 < dx.                                                                    //
+        **********************************************************************************************/
+    const TWO = bignumber.BigNumber.from(2).mul(constants.WeiPerEther);
+    const afterFeeMultiplier = constants.WeiPerEther.sub(swapFee); // 1 - s
+    const virtIn = balances[0].add(virtualParamIn); // x + virtualParamX = x'
+    const numerator = virtIn.add(mulDown(afterFeeMultiplier, inAmount)); // x' + (1 - s) * dx
+    const virtOut = balances[1].add(virtualParamOut); // y + virtualParamY = y'
+    const denominator = mulDown(virtOut.sub(outAmount), virtOut.sub(outAmount)); // (y' + dy)^2
+    const factor = divDown(TWO, afterFeeMultiplier); // 2 / (1 - s)
+    const derivative = mulDown(factor, divDown(numerator, denominator));
+    return derivative;
+}
+// /////////
+// ///  Normalized Liquidity measured with respect to the in-asset.
+// /////////
+function _getNormalizedLiquidity$1(balances, virtualParamOut) {
+    /**********************************************************************************************
+    // x = balanceOut             x' = x +  virtualParamOut                                      //
+    // s = swapFee                                                                               //
+    //                                                                                           //
+    //                             normalizedLiquidity =  0.5 * x'                               //
+    //                                                                                           //
+    // x' = virtOut                                                                              //
+    // Note that balances = [balanceIn, balanceOut].                                             //
+    **********************************************************************************************/
+    const virtOut = balances[1].add(virtualParamOut);
+    return virtOut.div(2);
+}
+
+////////
+/// Normalize balances
+////////
+function _normalizeBalances(balances, decimals) {
+    const scalingFactors = decimals.map((d) => bignumber.parseFixed('1', d));
+    return balances.map((bal, index) =>
+        bal.mul(constants.WeiPerEther).div(scalingFactors[index])
+    );
+}
+/////////
+/// Fee calculations
+/////////
+function _reduceFee(amountIn, swapFee) {
+    const feeAmount = amountIn.mul(swapFee).div(constants.WeiPerEther);
+    return amountIn.sub(feeAmount);
+}
+function _addFee(amountIn, swapFee) {
+    return amountIn
+        .mul(constants.WeiPerEther)
+        .div(constants.WeiPerEther.sub(swapFee));
+}
+
+class Gyro2Pool {
+    constructor(
+        id,
+        address,
+        swapFee,
+        totalShares,
+        tokens,
+        tokensList,
+        sqrtAlpha,
+        sqrtBeta
+    ) {
+        this.poolType = exports.PoolTypes.Gyro2;
+        this.id = id;
+        this.address = address;
+        this.swapFee = safeParseFixed(swapFee, 18);
+        this.totalShares = safeParseFixed(totalShares, 18);
+        this.tokens = tokens;
+        this.tokensList = tokensList;
+        this.sqrtAlpha = safeParseFixed(sqrtAlpha, 18);
+        this.sqrtBeta = safeParseFixed(sqrtBeta, 18);
+    }
+    static fromPool(pool) {
+        if (!pool.sqrtAlpha || !pool.sqrtBeta)
+            throw new Error(
+                'Pool missing Gyro2 sqrtAlpha and/or sqrtBeta params'
+            );
+        return new Gyro2Pool(
+            pool.id,
+            pool.address,
+            pool.swapFee,
+            pool.totalShares,
+            pool.tokens,
+            pool.tokensList,
+            pool.sqrtAlpha,
+            pool.sqrtBeta
+        );
+    }
+    parsePoolPairData(tokenIn, tokenOut) {
+        const tokenInIndex = this.tokens.findIndex(
+            (t) => address.getAddress(t.address) === address.getAddress(tokenIn)
+        );
+        if (tokenInIndex < 0) throw 'Pool does not contain tokenIn';
+        const tI = this.tokens[tokenInIndex];
+        const balanceIn = tI.balance;
+        const decimalsIn = tI.decimals;
+        const tokenOutIndex = this.tokens.findIndex(
+            (t) =>
+                address.getAddress(t.address) === address.getAddress(tokenOut)
+        );
+        if (tokenOutIndex < 0) throw 'Pool does not contain tokenOut';
+        const tO = this.tokens[tokenOutIndex];
+        const balanceOut = tO.balance;
+        const decimalsOut = tO.decimals;
+        const tokenInIsToken0 = tokenInIndex === 0;
+        const poolPairData = {
+            id: this.id,
+            address: this.address,
+            poolType: this.poolType,
+            tokenIn: tokenIn,
+            tokenOut: tokenOut,
+            decimalsIn: Number(decimalsIn),
+            decimalsOut: Number(decimalsOut),
+            balanceIn: safeParseFixed(balanceIn, decimalsIn),
+            balanceOut: safeParseFixed(balanceOut, decimalsOut),
+            swapFee: this.swapFee,
+            sqrtAlpha: tokenInIsToken0
+                ? this.sqrtAlpha
+                : divDown(constants.WeiPerEther, this.sqrtBeta),
+            sqrtBeta: tokenInIsToken0
+                ? this.sqrtBeta
+                : divDown(constants.WeiPerEther, this.sqrtAlpha),
+        };
+        return poolPairData;
+    }
+    getNormalizedLiquidity(poolPairData) {
+        const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
+        const normalizedBalances = _normalizeBalances(balances, [
+            poolPairData.decimalsIn,
+            poolPairData.decimalsOut,
+        ]);
+        const invariant = _calculateInvariant$1(
+            normalizedBalances,
+            poolPairData.sqrtAlpha,
+            poolPairData.sqrtBeta
+        );
+        const [, virtualParamOut] = _findVirtualParams(
+            invariant,
+            poolPairData.sqrtAlpha,
+            poolPairData.sqrtBeta
+        );
+        const normalisedLiquidity = _getNormalizedLiquidity$1(
+            normalizedBalances,
+            virtualParamOut
+        );
+        return bnum(bignumber.formatFixed(normalisedLiquidity, 18));
+    }
+    getLimitAmountSwap(poolPairData, swapType) {
+        if (swapType === exports.SwapTypes.SwapExactIn) {
+            const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
+            const normalizedBalances = _normalizeBalances(balances, [
+                poolPairData.decimalsIn,
+                poolPairData.decimalsOut,
+            ]);
+            const invariant = _calculateInvariant$1(
+                normalizedBalances,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const maxAmountInAssetInPool = mulDown(
+                invariant,
+                divDown(constants.WeiPerEther, poolPairData.sqrtAlpha).sub(
+                    divDown(constants.WeiPerEther, poolPairData.sqrtBeta)
+                )
+            ); // x+ = L * (1/sqrtAlpha - 1/sqrtBeta)
+            const limitAmountIn = maxAmountInAssetInPool.sub(
+                normalizedBalances[0]
+            );
+            const limitAmountInPlusSwapFee = divDown(
+                limitAmountIn,
+                constants.WeiPerEther.sub(poolPairData.swapFee)
+            );
+            return bnum(
+                bignumber.formatFixed(
+                    mulDown(limitAmountInPlusSwapFee, SWAP_LIMIT_FACTOR),
+                    18
+                )
+            );
+        } else {
+            return bnum(
+                bignumber.formatFixed(
+                    mulDown(poolPairData.balanceOut, SWAP_LIMIT_FACTOR),
+                    poolPairData.decimalsOut
+                )
+            );
+        }
+    }
+    // Updates the balance of a given token for the pool
+    updateTokenBalanceForPool(token, newBalance) {
+        // token is BPT
+        if (this.address == token) {
+            this.totalShares = newBalance;
+        } else {
+            // token is underlying in the pool
+            const T = this.tokens.find((t) => isSameAddress(t.address, token));
+            if (!T) throw Error('Pool does not contain this token');
+            T.balance = bignumber.formatFixed(newBalance, T.decimals);
+        }
+    }
+    _exactTokenInForTokenOut(poolPairData, amount) {
+        try {
+            const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
+            const normalizedBalances = _normalizeBalances(balances, [
+                poolPairData.decimalsIn,
+                poolPairData.decimalsOut,
+            ]);
+            const invariant = _calculateInvariant$1(
+                normalizedBalances,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const [virtualParamIn, virtualParamOut] = _findVirtualParams(
+                invariant,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const inAmount = safeParseFixed(amount.toString(), 18);
+            const inAmountLessFee = _reduceFee(inAmount, poolPairData.swapFee);
+            const outAmount = _calcOutGivenIn$1(
+                normalizedBalances[0],
+                normalizedBalances[1],
+                inAmountLessFee,
+                virtualParamIn,
+                virtualParamOut
+            );
+            return bnum(bignumber.formatFixed(outAmount, 18));
+        } catch (error) {
+            return bnum(0);
+        }
+    }
+    _tokenInForExactTokenOut(poolPairData, amount) {
+        try {
+            const outAmount = safeParseFixed(amount.toString(), 18);
+            const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
+            const normalizedBalances = _normalizeBalances(balances, [
+                poolPairData.decimalsIn,
+                poolPairData.decimalsOut,
+            ]);
+            const invariant = _calculateInvariant$1(
+                normalizedBalances,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const [virtualParamIn, virtualParamOut] = _findVirtualParams(
+                invariant,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const inAmountLessFee = _calcInGivenOut$1(
+                normalizedBalances[0],
+                normalizedBalances[1],
+                outAmount,
+                virtualParamIn,
+                virtualParamOut
+            );
+            const inAmount = _addFee(inAmountLessFee, poolPairData.swapFee);
+            return bnum(bignumber.formatFixed(inAmount, 18));
+        } catch (error) {
+            return bnum(0);
+        }
+    }
+    _spotPriceAfterSwapExactTokenInForTokenOut(poolPairData, amount) {
+        try {
+            const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
+            const normalizedBalances = _normalizeBalances(balances, [
+                poolPairData.decimalsIn,
+                poolPairData.decimalsOut,
+            ]);
+            const invariant = _calculateInvariant$1(
+                normalizedBalances,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const [virtualParamIn, virtualParamOut] = _findVirtualParams(
+                invariant,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const inAmount = safeParseFixed(amount.toString(), 18);
+            const inAmountLessFee = _reduceFee(inAmount, poolPairData.swapFee);
+            const outAmount = _calcOutGivenIn$1(
+                normalizedBalances[0],
+                normalizedBalances[1],
+                inAmountLessFee,
+                virtualParamIn,
+                virtualParamOut
+            );
+            const newSpotPrice = _calculateNewSpotPrice$1(
+                normalizedBalances,
+                inAmount,
+                outAmount,
+                virtualParamIn,
+                virtualParamOut,
+                poolPairData.swapFee
+            );
+            return bnum(bignumber.formatFixed(newSpotPrice, 18));
+        } catch (error) {
+            return bnum(0);
+        }
+    }
+    _spotPriceAfterSwapTokenInForExactTokenOut(poolPairData, amount) {
+        try {
+            const outAmount = safeParseFixed(amount.toString(), 18);
+            const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
+            const normalizedBalances = _normalizeBalances(balances, [
+                poolPairData.decimalsIn,
+                poolPairData.decimalsOut,
+            ]);
+            const invariant = _calculateInvariant$1(
+                normalizedBalances,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const [virtualParamIn, virtualParamOut] = _findVirtualParams(
+                invariant,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const inAmountLessFee = _calcInGivenOut$1(
+                normalizedBalances[0],
+                normalizedBalances[1],
+                outAmount,
+                virtualParamIn,
+                virtualParamOut
+            );
+            const inAmount = _addFee(inAmountLessFee, poolPairData.swapFee);
+            const newSpotPrice = _calculateNewSpotPrice$1(
+                normalizedBalances,
+                inAmount,
+                outAmount,
+                virtualParamIn,
+                virtualParamOut,
+                poolPairData.swapFee
+            );
+            return bnum(bignumber.formatFixed(newSpotPrice, 18));
+        } catch (error) {
+            return bnum(0);
+        }
+    }
+    _derivativeSpotPriceAfterSwapExactTokenInForTokenOut(poolPairData, amount) {
+        try {
+            const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
+            const normalizedBalances = _normalizeBalances(balances, [
+                poolPairData.decimalsIn,
+                poolPairData.decimalsOut,
+            ]);
+            const invariant = _calculateInvariant$1(
+                normalizedBalances,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const [virtualParamIn, virtualParamOut] = _findVirtualParams(
+                invariant,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const inAmount = safeParseFixed(amount.toString(), 18);
+            const inAmountLessFee = _reduceFee(inAmount, poolPairData.swapFee);
+            const outAmount = _calcOutGivenIn$1(
+                normalizedBalances[0],
+                normalizedBalances[1],
+                inAmountLessFee,
+                virtualParamIn,
+                virtualParamOut
+            );
+            const derivative =
+                _derivativeSpotPriceAfterSwapExactTokenInForTokenOut$1(
+                    normalizedBalances,
+                    outAmount,
+                    virtualParamOut
+                );
+            return bnum(bignumber.formatFixed(derivative, 18));
+        } catch (error) {
+            return bnum(0);
+        }
+    }
+    _derivativeSpotPriceAfterSwapTokenInForExactTokenOut(poolPairData, amount) {
+        try {
+            const outAmount = safeParseFixed(amount.toString(), 18);
+            const balances = [poolPairData.balanceIn, poolPairData.balanceOut];
+            const normalizedBalances = _normalizeBalances(balances, [
+                poolPairData.decimalsIn,
+                poolPairData.decimalsOut,
+            ]);
+            const invariant = _calculateInvariant$1(
+                normalizedBalances,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const [virtualParamIn, virtualParamOut] = _findVirtualParams(
+                invariant,
+                poolPairData.sqrtAlpha,
+                poolPairData.sqrtBeta
+            );
+            const inAmountLessFee = _calcInGivenOut$1(
+                normalizedBalances[0],
+                normalizedBalances[1],
+                outAmount,
+                virtualParamIn,
+                virtualParamOut
+            );
+            const inAmount = _addFee(inAmountLessFee, poolPairData.swapFee);
+            const derivative =
+                _derivativeSpotPriceAfterSwapTokenInForExactTokenOut$1(
+                    normalizedBalances,
+                    inAmount,
+                    outAmount,
+                    virtualParamIn,
+                    virtualParamOut,
+                    poolPairData.swapFee
+                );
+            return bnum(bignumber.formatFixed(derivative, 18));
+        } catch (error) {
+            return bnum(0);
+        }
+    }
+}
+
+// POW3 constant
+// Threshold of x where the normal method of computing x^3 would overflow and we need a workaround.
+// Equal to 4.87e13 scaled; 4.87e13 is the point x where x**3 * 10**36 = (x**2 native) * (x native) ~ 2**256
+const _SAFE_LARGE_POW3_THRESHOLD = bignumber.BigNumber.from(10)
+    .pow(29)
+    .mul(487);
+const MIDDECIMAL = bignumber.BigNumber.from(10).pow(9); // splits the fixed point decimals into two equal parts.
+// Stopping criterion for the Newton iteration that computes the invariant:
+// - Stop if the step width doesn't shrink anymore by at least a factor _INVARIANT_SHRINKING_FACTOR_PER_STEP.
+// - ... but in any case, make at least _INVARIANT_MIN_ITERATIONS iterations. This is useful to compensate for a
+// less-than-ideal starting point, which is important when alpha is small.
+const _INVARIANT_SHRINKING_FACTOR_PER_STEP = 8;
+const _INVARIANT_MIN_ITERATIONS = 5;
+
+// Helpers
 function _safeLargePow3ADown(l, root3Alpha, d) {
     let ret = bignumber.BigNumber.from(0);
     if (l.lte(_SAFE_LARGE_POW3_THRESHOLD)) {
@@ -12077,27 +12377,6 @@ function _safeLargePow3ADown(l, root3Alpha, d) {
         ret = ret.mul(MIDDECIMAL).div(d.div(MIDDECIMAL));
     }
     return ret;
-}
-/////////
-/// Fee calculations
-/////////
-function _reduceFee(amountIn, swapFee) {
-    const feeAmount = amountIn.mul(swapFee).div(constants.WeiPerEther);
-    return amountIn.sub(feeAmount);
-}
-function _addFee(amountIn, swapFee) {
-    return amountIn
-        .mul(constants.WeiPerEther)
-        .div(constants.WeiPerEther.sub(swapFee));
-}
-////////
-/// Normalize balances
-////////
-function _normalizeBalances(balances, decimals) {
-    const scalingFactors = decimals.map((d) => bignumber.parseFixed('1', d));
-    return balances.map((bal, index) =>
-        bal.mul(constants.WeiPerEther).div(scalingFactors[index])
-    );
 }
 
 /////////
@@ -12151,7 +12430,7 @@ function _calculateCubicStartingPoint(a, mb, mc) {
         mulUp(mulUp(a, mc), constants.WeiPerEther.mul(3))
     );
     const lmin = divUp(mb, a.mul(3)).add(
-        divUp(newtonSqrt(radic, bignumber.BigNumber.from(5)), a.mul(3))
+        divUp(sqrt(radic, bignumber.BigNumber.from(5)), a.mul(3))
     );
     // This formula has been found experimentally. It is exact for alpha -> 1, where the factor is 1.5. All
     // factors > 1 are safe. For small alpha values, it is more efficient to fallback to a larger factor.
@@ -12420,16 +12699,13 @@ class Gyro3Pool {
         root3Alpha
     ) {
         this.poolType = exports.PoolTypes.Gyro3;
-        // Max In/Out Ratios
-        this.MAX_IN_RATIO = bignumber.parseFixed('0.3', 18);
-        this.MAX_OUT_RATIO = bignumber.parseFixed('0.3', 18);
         this.id = id;
         this.address = address;
-        this.swapFee = bignumber.parseFixed(swapFee, 18);
-        this.totalShares = bignumber.parseFixed(totalShares, 18);
+        this.swapFee = safeParseFixed(swapFee, 18);
+        this.totalShares = safeParseFixed(totalShares, 18);
         this.tokens = tokens;
         this.tokensList = tokensList;
-        this.root3Alpha = bignumber.parseFixed(root3Alpha, 18);
+        this.root3Alpha = safeParseFixed(root3Alpha, 18);
     }
     static findToken(list, tokenAddress, error) {
         const token = list.find(
@@ -12443,8 +12719,8 @@ class Gyro3Pool {
     static fromPool(pool) {
         if (!pool.root3Alpha) throw new Error('Pool missing root3Alpha');
         if (
-            bignumber.parseFixed(pool.root3Alpha, 18).lte(0) ||
-            bignumber.parseFixed(pool.root3Alpha, 18).gte(constants.WeiPerEther)
+            safeParseFixed(pool.root3Alpha, 18).lte(0) ||
+            safeParseFixed(pool.root3Alpha, 18).gte(constants.WeiPerEther)
         )
             throw new Error('Invalid root3Alpha parameter');
         if (pool.tokens.length !== 3)
@@ -12493,12 +12769,9 @@ class Gyro3Pool {
             decimalsIn: Number(decimalsIn),
             decimalsOut: Number(decimalsOut),
             decimalsTertiary: Number(decimalsTertiary),
-            balanceIn: bignumber.parseFixed(balanceIn, decimalsIn),
-            balanceOut: bignumber.parseFixed(balanceOut, decimalsOut),
-            balanceTertiary: bignumber.parseFixed(
-                balanceTertiary,
-                decimalsTertiary
-            ),
+            balanceIn: safeParseFixed(balanceIn, decimalsIn),
+            balanceOut: safeParseFixed(balanceOut, decimalsOut),
+            balanceTertiary: safeParseFixed(balanceTertiary, decimalsTertiary),
             swapFee: this.swapFee,
         };
         return poolPairData;
@@ -12528,16 +12801,46 @@ class Gyro3Pool {
     }
     getLimitAmountSwap(poolPairData, swapType) {
         if (swapType === exports.SwapTypes.SwapExactIn) {
+            const balances = [
+                poolPairData.balanceIn,
+                poolPairData.balanceOut,
+                poolPairData.balanceTertiary,
+            ];
+            const decimals = [
+                poolPairData.decimalsIn,
+                poolPairData.decimalsOut,
+                poolPairData.decimalsTertiary,
+            ];
+            const normalizedBalances = _normalizeBalances(balances, decimals);
+            const invariant = _calculateInvariant(
+                normalizedBalances,
+                this.root3Alpha
+            );
+            const a = mulDown(invariant, this.root3Alpha);
+            const maxAmountInAssetInPool = divDown(
+                mulDown(
+                    normalizedBalances[0].add(a),
+                    normalizedBalances[1].add(a)
+                ),
+                a
+            ).sub(a); // (x + a)(y + a) / a - a
+            const limitAmountIn = maxAmountInAssetInPool.sub(
+                normalizedBalances[0]
+            );
+            const limitAmountInPlusSwapFee = divDown(
+                limitAmountIn,
+                constants.WeiPerEther.sub(poolPairData.swapFee)
+            );
             return bnum(
                 bignumber.formatFixed(
-                    mulDown(poolPairData.balanceIn, this.MAX_IN_RATIO),
-                    poolPairData.decimalsIn
+                    mulDown(limitAmountInPlusSwapFee, SWAP_LIMIT_FACTOR),
+                    18
                 )
             );
         } else {
             return bnum(
                 bignumber.formatFixed(
-                    mulDown(poolPairData.balanceOut, this.MAX_OUT_RATIO),
+                    mulDown(poolPairData.balanceOut, SWAP_LIMIT_FACTOR),
                     poolPairData.decimalsOut
                 )
             );
@@ -12573,7 +12876,7 @@ class Gyro3Pool {
                 this.root3Alpha
             );
             const virtualOffsetInOut = mulDown(invariant, this.root3Alpha);
-            const inAmount = bignumber.parseFixed(amount.toString(), 18);
+            const inAmount = safeParseFixed(amount.toString(), 18);
             const inAmountLessFee = _reduceFee(inAmount, poolPairData.swapFee);
             const outAmount = _calcOutGivenIn(
                 normalizedBalances[0],
@@ -12588,7 +12891,7 @@ class Gyro3Pool {
     }
     _tokenInForExactTokenOut(poolPairData, amount) {
         try {
-            const outAmount = bignumber.parseFixed(amount.toString(), 18);
+            const outAmount = safeParseFixed(amount.toString(), 18);
             const balances = [
                 poolPairData.balanceIn,
                 poolPairData.balanceOut,
@@ -12635,7 +12938,7 @@ class Gyro3Pool {
                 this.root3Alpha
             );
             const virtualOffsetInOut = mulDown(invariant, this.root3Alpha);
-            const inAmount = bignumber.parseFixed(amount.toString(), 18);
+            const inAmount = safeParseFixed(amount.toString(), 18);
             const inAmountLessFee = _reduceFee(inAmount, poolPairData.swapFee);
             const outAmount = _calcOutGivenIn(
                 normalizedBalances[0],
@@ -12657,7 +12960,7 @@ class Gyro3Pool {
     }
     _spotPriceAfterSwapTokenInForExactTokenOut(poolPairData, amount) {
         try {
-            const outAmount = bignumber.parseFixed(amount.toString(), 18);
+            const outAmount = safeParseFixed(amount.toString(), 18);
             const balances = [
                 poolPairData.balanceIn,
                 poolPairData.balanceOut,
@@ -12694,67 +12997,1318 @@ class Gyro3Pool {
         }
     }
     _derivativeSpotPriceAfterSwapExactTokenInForTokenOut(poolPairData, amount) {
-        const balances = [
-            poolPairData.balanceIn,
-            poolPairData.balanceOut,
-            poolPairData.balanceTertiary,
-        ];
-        const decimals = [
-            poolPairData.decimalsIn,
-            poolPairData.decimalsOut,
-            poolPairData.decimalsTertiary,
-        ];
-        const normalizedBalances = _normalizeBalances(balances, decimals);
-        const invariant = _calculateInvariant(
-            normalizedBalances,
-            this.root3Alpha
+        try {
+            const balances = [
+                poolPairData.balanceIn,
+                poolPairData.balanceOut,
+                poolPairData.balanceTertiary,
+            ];
+            const decimals = [
+                poolPairData.decimalsIn,
+                poolPairData.decimalsOut,
+                poolPairData.decimalsTertiary,
+            ];
+            const normalizedBalances = _normalizeBalances(balances, decimals);
+            const invariant = _calculateInvariant(
+                normalizedBalances,
+                this.root3Alpha
+            );
+            const virtualOffsetInOut = mulDown(invariant, this.root3Alpha);
+            const inAmount = safeParseFixed(amount.toString(), 18);
+            const inAmountLessFee = _reduceFee(inAmount, poolPairData.swapFee);
+            const outAmount = _calcOutGivenIn(
+                normalizedBalances[0],
+                normalizedBalances[1],
+                inAmountLessFee,
+                virtualOffsetInOut
+            );
+            const derivative =
+                _derivativeSpotPriceAfterSwapExactTokenInForTokenOut(
+                    normalizedBalances,
+                    outAmount,
+                    virtualOffsetInOut
+                );
+            return bnum(bignumber.formatFixed(derivative, 18));
+        } catch (error) {
+            return bnum(0);
+        }
+    }
+    _derivativeSpotPriceAfterSwapTokenInForExactTokenOut(poolPairData, amount) {
+        try {
+            const outAmount = safeParseFixed(amount.toString(), 18);
+            const balances = [
+                poolPairData.balanceIn,
+                poolPairData.balanceOut,
+                poolPairData.balanceTertiary,
+            ];
+            const decimals = [
+                poolPairData.decimalsIn,
+                poolPairData.decimalsOut,
+                poolPairData.decimalsTertiary,
+            ];
+            const normalizedBalances = _normalizeBalances(balances, decimals);
+            const invariant = _calculateInvariant(
+                normalizedBalances,
+                this.root3Alpha
+            );
+            const virtualOffsetInOut = mulDown(invariant, this.root3Alpha);
+            const inAmountLessFee = _calcInGivenOut(
+                normalizedBalances[0],
+                normalizedBalances[1],
+                outAmount,
+                virtualOffsetInOut
+            );
+            const inAmount = _addFee(inAmountLessFee, poolPairData.swapFee);
+            const derivative =
+                _derivativeSpotPriceAfterSwapTokenInForExactTokenOut(
+                    normalizedBalances,
+                    inAmount,
+                    outAmount,
+                    virtualOffsetInOut,
+                    poolPairData.swapFee
+                );
+            return bnum(bignumber.formatFixed(derivative, 18));
+        } catch (error) {
+            return bnum(0);
+        }
+    }
+}
+
+const MAX_BALANCES = bignumber.BigNumber.from(10).pow(34); // 1e16 in normal precision
+// Invariant calculation
+const MAX_INVARIANT = bignumber.BigNumber.from(10).pow(37).mul(3); // 3e19 in normal precision
+
+/////////
+/// FEE CALCULATION
+/////////
+function reduceFee(amountIn, swapFee) {
+    const feeAmount = mulDown(amountIn, swapFee);
+    return amountIn.sub(feeAmount);
+}
+function addFee(amountIn, swapFee) {
+    return divDown(amountIn, constants.WeiPerEther.sub(swapFee));
+}
+////////
+/// BALANCE CALCULATION
+////////
+function normalizeBalances(balances, decimals) {
+    const scalingFactors = decimals.map((d) => bignumber.parseFixed('1', d));
+    return balances.map((bal, index) =>
+        bal.mul(constants.WeiPerEther).div(scalingFactors[index])
+    );
+}
+function balancesFromTokenInOut(
+    balanceTokenIn,
+    balanceTokenOut,
+    tokenInIsToken0
+) {
+    return tokenInIsToken0
+        ? [balanceTokenIn, balanceTokenOut]
+        : [balanceTokenOut, balanceTokenIn];
+}
+/////////
+/// INVARIANT CALC
+/////////
+function calcAtAChi(x, y, p, d) {
+    const dSq2 = mulXpU(d.dSq, d.dSq);
+    // (cx - sy) * (w/lambda + z) / lambda
+    //      account for 2 factors of dSq (4 s,c factors)
+    const termXp = divXpU(
+        divDownMagU(divDownMagU(d.w, p.lambda).add(d.z), p.lambda),
+        dSq2
+    );
+    let val = mulDownXpToNpU(
+        mulDownMagU(x, p.c).sub(mulDownMagU(y, p.s)),
+        termXp
+    );
+    // (x lambda s + y lambda c) * u, note u > 0
+    let termNp = mulDownMagU(mulDownMagU(x, p.lambda), p.s).add(
+        mulDownMagU(mulDownMagU(y, p.lambda), p.c)
+    );
+    val = val.add(mulDownXpToNpU(termNp, divXpU(d.u, dSq2)));
+    // (sx+cy) * v, note v > 0
+    termNp = mulDownMagU(x, p.s).add(mulDownMagU(y, p.c));
+    val = val.add(mulDownXpToNpU(termNp, divXpU(d.v, dSq2)));
+    return val;
+}
+function calcInvariantSqrt(x, y, p, d) {
+    let val = calcMinAtxAChiySqPlusAtxSq(x, y, p, d).add(
+        calc2AtxAtyAChixAChiy(x, y, p, d)
+    );
+    val = val.add(calcMinAtyAChixSqPlusAtySq(x, y, p, d));
+    const err = mulUpMagU(x, x).add(mulUpMagU(y, y)).div(ONE_XP);
+    val = val.gt(0)
+        ? sqrt(val, bignumber.BigNumber.from(5))
+        : bignumber.BigNumber.from(0);
+    return [val, err];
+}
+function calcMinAtxAChiySqPlusAtxSq(x, y, p, d) {
+    let termNp = mulUpMagU(mulUpMagU(mulUpMagU(x, x), p.c), p.c).add(
+        mulUpMagU(mulUpMagU(mulUpMagU(y, y), p.s), p.s)
+    );
+    termNp = termNp.sub(
+        mulDownMagU(mulDownMagU(mulDownMagU(x, y), p.c.mul(2)), p.s)
+    );
+    let termXp = mulXpU(d.u, d.u)
+        .add(divDownMagU(mulXpU(d.u.mul(2), d.v), p.lambda))
+        .add(divDownMagU(divDownMagU(mulXpU(d.v, d.v), p.lambda), p.lambda));
+    let val = mulDownXpToNpU(termNp.mul(-1), termXp);
+    val = val.add(
+        mulDownXpToNpU(
+            divDownMagU(divDownMagU(termNp.sub(9), p.lambda), p.lambda),
+            divXpU(ONE_XP, d.dSq)
+        )
+    );
+    return val;
+}
+function calc2AtxAtyAChixAChiy(x, y, p, d) {
+    let termNp = mulDownMagU(
+        mulDownMagU(mulDownMagU(x, x).sub(mulUpMagU(y, y)), p.c.mul(2)),
+        p.s
+    );
+    const xy = mulDownMagU(y, x.mul(2));
+    termNp = termNp
+        .add(mulDownMagU(mulDownMagU(xy, p.c), p.c))
+        .sub(mulDownMagU(mulDownMagU(xy, p.s), p.s));
+    let termXp = mulXpU(d.z, d.u).add(
+        divDownMagU(divDownMagU(mulXpU(d.w, d.v), p.lambda), p.lambda)
+    );
+    termXp = termXp.add(
+        divDownMagU(mulXpU(d.w, d.u).add(mulXpU(d.z, d.v)), p.lambda)
+    );
+    termXp = divXpU(termXp, mulXpU(mulXpU(mulXpU(d.dSq, d.dSq), d.dSq), d.dSq));
+    const val = mulDownXpToNpU(termNp, termXp);
+    return val;
+}
+function calcMinAtyAChixSqPlusAtySq(x, y, p, d) {
+    let termNp = mulUpMagU(mulUpMagU(mulUpMagU(x, x), p.s), p.s).add(
+        mulUpMagU(mulUpMagU(mulUpMagU(y, y), p.c), p.c)
+    );
+    termNp = termNp.add(mulUpMagU(mulUpMagU(mulUpMagU(x, y), p.s.mul(2)), p.c));
+    let termXp = mulXpU(d.z, d.z).add(
+        divDownMagU(divDownMagU(mulXpU(d.w, d.w), p.lambda), p.lambda)
+    );
+    termXp = termXp.add(divDownMagU(mulXpU(d.z.mul(2), d.w), p.lambda));
+    termXp = divXpU(termXp, mulXpU(mulXpU(mulXpU(d.dSq, d.dSq), d.dSq), d.dSq));
+    let val = mulDownXpToNpU(termNp.mul(-1), termXp);
+    val = val.add(mulDownXpToNpU(termNp.sub(9), divXpU(ONE_XP, d.dSq)));
+    return val;
+}
+function calcAChiAChiInXp(p, d) {
+    const dSq3 = mulXpU(mulXpU(d.dSq, d.dSq), d.dSq);
+    let val = mulUpMagU(p.lambda, divXpU(mulXpU(d.u.mul(2), d.v), dSq3));
+    val = val.add(
+        mulUpMagU(
+            mulUpMagU(divXpU(mulXpU(d.u.add(1), d.u.add(1)), dSq3), p.lambda),
+            p.lambda
+        )
+    );
+    val = val.add(divXpU(mulXpU(d.v, d.v), dSq3));
+    const termXp = divUpMagU(d.w, p.lambda).add(d.z);
+    val = val.add(divXpU(mulXpU(termXp, termXp), dSq3));
+    return val;
+}
+/////////
+/// SWAP AMOUNT CALC
+/////////
+function checkAssetBounds(params, derived, invariant, newBal, assetIndex) {
+    if (assetIndex === 0) {
+        const xPlus = maxBalances0(params, derived, invariant);
+        if (newBal.gt(MAX_BALANCES) || newBal.gt(xPlus))
+            throw new Error('ASSET BOUNDS EXCEEDED');
+    } else {
+        const yPlus = maxBalances1(params, derived, invariant);
+        if (newBal.gt(MAX_BALANCES) || newBal.gt(yPlus))
+            throw new Error('ASSET BOUNDS EXCEEDED');
+    }
+}
+function maxBalances0(p, d, r) {
+    const termXp1 = divXpU(d.tauBeta.x.sub(d.tauAlpha.x), d.dSq);
+    const termXp2 = divXpU(d.tauBeta.y.sub(d.tauAlpha.y), d.dSq);
+    let xp = mulDownXpToNpU(
+        mulDownMagU(mulDownMagU(r.y, p.lambda), p.c),
+        termXp1
+    );
+    xp = xp.add(
+        termXp2.gt(bignumber.BigNumber.from(0))
+            ? mulDownMagU(r.y, p.s)
+            : mulDownXpToNpU(mulUpMagU(r.x, p.s), termXp2)
+    );
+    return xp;
+}
+function maxBalances1(p, d, r) {
+    const termXp1 = divXpU(d.tauBeta.x.sub(d.tauAlpha.x), d.dSq);
+    const termXp2 = divXpU(d.tauBeta.y.sub(d.tauAlpha.y), d.dSq);
+    let yp = mulDownXpToNpU(
+        mulDownMagU(mulDownMagU(r.y, p.lambda), p.s),
+        termXp1
+    );
+    yp = yp.add(
+        termXp2.gt(bignumber.BigNumber.from(0))
+            ? mulDownMagU(r.y, p.c)
+            : mulDownXpToNpU(mulUpMagU(r.x, p.c), termXp2)
+    );
+    return yp;
+}
+function calcYGivenX(x, params, d, r) {
+    const ab = {
+        x: virtualOffset0(params, d, r),
+        y: virtualOffset1(params, d, r),
+    };
+    const y = solveQuadraticSwap(
+        params.lambda,
+        x,
+        params.s,
+        params.c,
+        r,
+        ab,
+        d.tauBeta,
+        d.dSq
+    );
+    return y;
+}
+function calcXGivenY(y, params, d, r) {
+    const ba = {
+        x: virtualOffset1(params, d, r),
+        y: virtualOffset0(params, d, r),
+    };
+    const x = solveQuadraticSwap(
+        params.lambda,
+        y,
+        params.c,
+        params.s,
+        r,
+        ba,
+        {
+            x: d.tauAlpha.x.mul(-1),
+            y: d.tauAlpha.y,
+        },
+        d.dSq
+    );
+    return x;
+}
+function virtualOffset0(p, d, r, switchTau) {
+    const tauValue = switchTau ? d.tauAlpha : d.tauBeta;
+    const termXp = divXpU(tauValue.x, d.dSq);
+    let a = tauValue.x.gt(bignumber.BigNumber.from(0))
+        ? mulUpXpToNpU(mulUpMagU(mulUpMagU(r.x, p.lambda), p.c), termXp)
+        : mulUpXpToNpU(mulDownMagU(mulDownMagU(r.y, p.lambda), p.c), termXp);
+    a = a.add(mulUpXpToNpU(mulUpMagU(r.x, p.s), divXpU(tauValue.y, d.dSq)));
+    return a;
+}
+function virtualOffset1(p, d, r, switchTau) {
+    const tauValue = switchTau ? d.tauBeta : d.tauAlpha;
+    const termXp = divXpU(tauValue.x, d.dSq);
+    let b = tauValue.x.lt(bignumber.BigNumber.from(0))
+        ? mulUpXpToNpU(mulUpMagU(mulUpMagU(r.x, p.lambda), p.s), termXp.mul(-1))
+        : mulUpXpToNpU(
+              mulDownMagU(mulDownMagU(r.y.mul(-1), p.lambda), p.s),
+              termXp
+          );
+    b = b.add(mulUpXpToNpU(mulUpMagU(r.x, p.c), divXpU(tauValue.y, d.dSq)));
+    return b;
+}
+function solveQuadraticSwap(lambda, x, s, c, r, ab, tauBeta, dSq) {
+    const lamBar = {
+        x: ONE_XP.sub(divDownMagU(divDownMagU(ONE_XP, lambda), lambda)),
+        y: ONE_XP.sub(divUpMagU(divUpMagU(ONE_XP, lambda), lambda)),
+    };
+    const q = {
+        a: bignumber.BigNumber.from(0),
+        b: bignumber.BigNumber.from(0),
+        c: bignumber.BigNumber.from(0),
+    };
+    const xp = x.sub(ab.x);
+    if (xp.gt(bignumber.BigNumber.from(0))) {
+        q.b = mulUpXpToNpU(
+            mulDownMagU(mulDownMagU(xp.mul(-1), s), c),
+            divXpU(lamBar.y, dSq)
         );
-        const virtualOffsetInOut = mulDown(invariant, this.root3Alpha);
-        const inAmount = bignumber.parseFixed(amount.toString(), 18);
-        const inAmountLessFee = _reduceFee(inAmount, poolPairData.swapFee);
-        const outAmount = _calcOutGivenIn(
+    } else {
+        q.b = mulUpXpToNpU(
+            mulUpMagU(mulUpMagU(xp.mul(-1), s), c),
+            divXpU(lamBar.x, dSq).add(1)
+        );
+    }
+    const sTerm = {
+        x: divXpU(mulDownMagU(mulDownMagU(lamBar.y, s), s), dSq),
+        y: divXpU(mulUpMagU(mulUpMagU(lamBar.x, s), s), dSq.add(1)).add(1),
+    };
+    sTerm.x = ONE_XP.sub(sTerm.x);
+    sTerm.y = ONE_XP.sub(sTerm.y);
+    q.c = calcXpXpDivLambdaLambda(x, r, lambda, s, c, tauBeta, dSq).mul(-1);
+    q.c = q.c.add(mulDownXpToNpU(mulDownMagU(r.y, r.y), sTerm.y)); // r.y ===  currentInv + err
+    q.c = q.c.gt(bignumber.BigNumber.from(0))
+        ? sqrt(q.c, bignumber.BigNumber.from(5))
+        : bignumber.BigNumber.from(0);
+    if (q.b.sub(q.c).gt(bignumber.BigNumber.from(0))) {
+        q.a = mulUpXpToNpU(q.b.sub(q.c), divXpU(ONE_XP, sTerm.y).add(1));
+    } else {
+        q.a = mulUpXpToNpU(q.b.sub(q.c), divXpU(ONE_XP, sTerm.x));
+    }
+    return q.a.add(ab.y);
+}
+function calcXpXpDivLambdaLambda(x, r, lambda, s, c, tauBeta, dSq) {
+    const sqVars = {
+        x: mulXpU(dSq, dSq),
+        y: mulUpMagU(r.x, r.x),
+    };
+    const q = {
+        a: bignumber.BigNumber.from(0),
+        b: bignumber.BigNumber.from(0),
+        c: bignumber.BigNumber.from(0),
+    };
+    let termXp = divXpU(mulXpU(tauBeta.x, tauBeta.y), sqVars.x);
+    if (termXp.gt(bignumber.BigNumber.from(0))) {
+        q.a = mulUpMagU(sqVars.y, s.mul(2));
+        q.a = mulUpXpToNpU(mulUpMagU(q.a, c), termXp.add(7));
+    } else {
+        q.a = mulDownMagU(mulDownMagU(r.y, r.y), s.mul(2)); // r.y ===  currentInv + err
+        q.a = mulUpXpToNpU(mulDownMagU(q.a, c), termXp);
+    }
+    if (tauBeta.x.lt(bignumber.BigNumber.from(0))) {
+        q.b = mulUpXpToNpU(
+            mulUpMagU(mulUpMagU(r.x, x), c.mul(2)),
+            divXpU(tauBeta.x, dSq).mul(-1).add(3)
+        );
+    } else {
+        q.b = mulUpXpToNpU(
+            mulDownMagU(mulDownMagU(r.y.mul(-1), x), c.mul(2)),
+            divXpU(tauBeta.x, dSq)
+        );
+    }
+    q.a = q.a.add(q.b);
+    termXp = divXpU(mulXpU(tauBeta.y, tauBeta.y), sqVars.x).add(7);
+    q.b = mulUpMagU(sqVars.y, s);
+    q.b = mulUpXpToNpU(mulUpMagU(q.b, s), termXp);
+    q.c = mulUpXpToNpU(
+        mulDownMagU(mulDownMagU(r.y.mul(-1), x), s.mul(2)),
+        divXpU(tauBeta.y, dSq)
+    );
+    q.b = q.b.add(q.c).add(mulUpMagU(x, x));
+    q.b = q.b.gt(bignumber.BigNumber.from(0))
+        ? divUpMagU(q.b, lambda)
+        : divDownMagU(q.b, lambda);
+    q.a = q.a.add(q.b);
+    q.a = q.a.gt(bignumber.BigNumber.from(0))
+        ? divUpMagU(q.a, lambda)
+        : divDownMagU(q.a, lambda);
+    termXp = divXpU(mulXpU(tauBeta.x, tauBeta.x), sqVars.x).add(7);
+    const val = mulUpMagU(mulUpMagU(sqVars.y, c), c);
+    return mulUpXpToNpU(val, termXp).add(q.a);
+}
+
+/////////
+/// SPOT PRICE AFTER SWAP CALCULATIONS
+/////////
+function calcSpotPriceYGivenX(x, params, d, r) {
+    const ab = {
+        x: virtualOffset0(params, d, r),
+        y: virtualOffset1(params, d, r),
+    };
+    const newSpotPriceFactor = solveDerivativeQuadraticSwap(
+        params.lambda,
+        x,
+        params.s,
+        params.c,
+        r,
+        ab,
+        d.tauBeta,
+        d.dSq
+    );
+    return newSpotPriceFactor;
+}
+function calcSpotPriceXGivenY(y, params, d, r) {
+    const ba = {
+        x: virtualOffset1(params, d, r),
+        y: virtualOffset0(params, d, r),
+    };
+    const newSpotPriceFactor = solveDerivativeQuadraticSwap(
+        params.lambda,
+        y,
+        params.c,
+        params.s,
+        r,
+        ba,
+        {
+            x: d.tauAlpha.x.mul(-1),
+            y: d.tauAlpha.y,
+        },
+        d.dSq
+    );
+    return newSpotPriceFactor;
+}
+function solveDerivativeQuadraticSwap(lambda, x, s, c, r, ab, tauBeta, dSq) {
+    const lamBar = {
+        x: ONE_XP.sub(divDownMagU(divDownMagU(ONE_XP, lambda), lambda)),
+        y: ONE_XP.sub(divUpMagU(divUpMagU(ONE_XP, lambda), lambda)),
+    };
+    const q = {
+        a: bignumber.BigNumber.from(0),
+        b: bignumber.BigNumber.from(0),
+        c: bignumber.BigNumber.from(0),
+    };
+    const xp = x.sub(ab.x);
+    q.b = mulUpXpToNpU(mulDownMagU(s, c), divXpU(lamBar.y, dSq));
+    const sTerm = {
+        x: divXpU(mulDownMagU(mulDownMagU(lamBar.y, s), s), dSq),
+        y: divXpU(mulUpMagU(mulUpMagU(lamBar.x, s), s), dSq.add(1)).add(1),
+    };
+    sTerm.x = ONE_XP.sub(sTerm.x);
+    sTerm.y = ONE_XP.sub(sTerm.y);
+    q.c = calcXpXpDivLambdaLambda(x, r, lambda, s, c, tauBeta, dSq).mul(-1);
+    q.c = q.c.add(mulDownXpToNpU(mulDownMagU(r.y, r.y), sTerm.y)); // r.y ===  currentInv + err
+    q.c = q.c.gt(bignumber.BigNumber.from(0))
+        ? sqrt(q.c, bignumber.BigNumber.from(5))
+        : bignumber.BigNumber.from(0);
+    q.c = mulDown(mulDown(q.c, lambda), lambda);
+    q.c = divDown(xp, q.c);
+    if (q.b.sub(q.c).gt(bignumber.BigNumber.from(0))) {
+        q.a = mulUpXpToNpU(q.b.sub(q.c), divXpU(ONE_XP, sTerm.y).add(1));
+    } else {
+        q.a = mulUpXpToNpU(q.b.sub(q.c), divXpU(ONE_XP, sTerm.x));
+    }
+    return q.a;
+}
+/////////
+/// SPOT PRICE DERIVATIVE CALCULATIONS
+/////////
+function setup(balances, params, derived, fee, rVec, ixVar) {
+    const r = rVec.y;
+    const { c, s, lambda } = params;
+    const [x0, y0] = balances;
+    const a = virtualOffset0(params, derived, rVec);
+    const b = virtualOffset1(params, derived, rVec);
+    const ls = constants.WeiPerEther.sub(
+        divDown(constants.WeiPerEther, mulDown(lambda, lambda))
+    );
+    const f = constants.WeiPerEther.sub(fee);
+    let R;
+    if (ixVar === 0) {
+        R = sqrt(
+            mulDown(
+                mulDown(r, r),
+                constants.WeiPerEther.sub(mulDown(ls, mulDown(s, s)))
+            ).sub(
+                divDown(mulDown(x0.sub(a), x0.sub(a)), mulDown(lambda, lambda))
+            ),
+            bignumber.BigNumber.from(5)
+        );
+    } else {
+        R = sqrt(
+            mulDown(
+                mulDown(r, r),
+                constants.WeiPerEther.sub(mulDown(ls, mulDown(c, c)))
+            ).sub(
+                divDown(mulDown(y0.sub(b), y0.sub(b)), mulDown(lambda, lambda))
+            ),
+            bignumber.BigNumber.from(5)
+        );
+    }
+    return { x0, y0, c, s, lambda, a, b, ls, f, r, R };
+}
+function normalizedLiquidityYIn(balances, params, derived, fee, rVec) {
+    const { y0, c, s, lambda, b, ls, R } = setup(
+        balances,
+        params,
+        derived,
+        fee,
+        rVec,
+        1
+    );
+    const returnValue = divDown(
+        mulDown(
+            divDown(
+                constants.WeiPerEther,
+                constants.WeiPerEther.sub(mulDown(ls, mulDown(c, c)))
+            ),
+            mulDown(
+                R,
+                mulDown(
+                    mulDown(
+                        mulDown(
+                            mulDown(mulDown(ls, s), c),
+                            mulDown(lambda, lambda)
+                        ),
+                        R
+                    ).sub(y0.sub(b)),
+                    mulDown(
+                        mulDown(
+                            mulDown(mulDown(ls, s), c),
+                            mulDown(lambda, lambda)
+                        ),
+                        R
+                    ).sub(y0.sub(b))
+                )
+            )
+        ),
+        mulDown(mulDown(lambda, lambda), mulDown(R, R)).add(
+            mulDown(y0.sub(b), y0.sub(b))
+        )
+    );
+    return returnValue;
+}
+function normalizedLiquidityXIn(balances, params, derived, fee, rVec) {
+    const { x0, c, s, lambda, a, ls, R } = setup(
+        balances,
+        params,
+        derived,
+        fee,
+        rVec,
+        0
+    );
+    const returnValue = divDown(
+        mulDown(
+            divDown(
+                constants.WeiPerEther,
+                constants.WeiPerEther.sub(mulDown(ls, mulDown(s, s)))
+            ),
+            mulDown(
+                R,
+                mulDown(
+                    mulDown(
+                        mulDown(
+                            mulDown(mulDown(ls, s), c),
+                            mulDown(lambda, lambda)
+                        ),
+                        R
+                    ).sub(x0.sub(a)),
+                    mulDown(
+                        mulDown(
+                            mulDown(mulDown(ls, s), c),
+                            mulDown(lambda, lambda)
+                        ),
+                        R
+                    ).sub(x0.sub(a))
+                )
+            )
+        ),
+        mulDown(mulDown(lambda, lambda), mulDown(R, R)).add(
+            mulDown(x0.sub(a), x0.sub(a))
+        )
+    );
+    return returnValue;
+}
+function dPyDXIn(balances, params, derived, fee, rVec) {
+    const { x0, c, s, lambda, a, ls, R } = setup(
+        balances,
+        params,
+        derived,
+        fee,
+        rVec,
+        0
+    );
+    const returnValue = divDown(
+        mulDown(
+            constants.WeiPerEther.sub(mulDown(ls, mulDown(s, s))),
+            divDown(
+                constants.WeiPerEther,
+                mulDown(mulDown(lambda, lambda), R)
+            ).add(
+                divDown(
+                    mulDown(x0.sub(a), x0.sub(a)),
+                    mulDown(
+                        mulDown(
+                            mulDown(lambda, lambda),
+                            mulDown(lambda, lambda)
+                        ),
+                        mulDown(R, mulDown(R, R))
+                    )
+                )
+            )
+        ),
+        mulDown(
+            mulDown(mulDown(ls, s), c).sub(
+                divDown(x0.sub(a), mulDown(mulDown(lambda, lambda), R))
+            ),
+            mulDown(mulDown(ls, s), c).sub(
+                divDown(x0.sub(a), mulDown(mulDown(lambda, lambda), R))
+            )
+        )
+    );
+    return returnValue;
+}
+function dPxDYIn(balances, params, derived, fee, rVec) {
+    const { y0, c, s, lambda, b, ls, R } = setup(
+        balances,
+        params,
+        derived,
+        fee,
+        rVec,
+        1
+    );
+    const returnValue = divDown(
+        mulDown(
+            constants.WeiPerEther.sub(mulDown(ls, mulDown(c, c))),
+            divDown(
+                constants.WeiPerEther,
+                mulDown(mulDown(lambda, lambda), R)
+            ).add(
+                divDown(
+                    mulDown(y0.sub(b), y0.sub(b)),
+                    mulDown(
+                        mulDown(
+                            mulDown(lambda, lambda),
+                            mulDown(lambda, lambda)
+                        ),
+                        mulDown(R, mulDown(R, R))
+                    )
+                )
+            )
+        ),
+        mulDown(
+            mulDown(mulDown(ls, s), c).sub(
+                divDown(y0.sub(b), mulDown(mulDown(lambda, lambda), R))
+            ),
+            mulDown(mulDown(ls, s), c).sub(
+                divDown(y0.sub(b), mulDown(mulDown(lambda, lambda), R))
+            )
+        )
+    );
+    return returnValue;
+}
+function dPxDXOut(balances, params, derived, fee, rVec) {
+    const { x0, s, lambda, a, ls, R, f } = setup(
+        balances,
+        params,
+        derived,
+        fee,
+        rVec,
+        0
+    );
+    const returnValue = mulDown(
+        divDown(
+            constants.WeiPerEther,
+            mulDown(f, constants.WeiPerEther.sub(mulDown(ls, mulDown(s, s))))
+        ),
+        divDown(constants.WeiPerEther, mulDown(mulDown(lambda, lambda), R)).add(
+            divDown(
+                mulDown(x0.sub(a), x0.sub(a)),
+                mulDown(
+                    mulDown(mulDown(lambda, lambda), mulDown(lambda, lambda)),
+                    mulDown(mulDown(R, R), R)
+                )
+            )
+        )
+    );
+    return returnValue;
+}
+function dPyDYOut(balances, params, derived, fee, rVec) {
+    const { y0, c, lambda, b, ls, R, f } = setup(
+        balances,
+        params,
+        derived,
+        fee,
+        rVec,
+        1
+    );
+    const returnValue = mulDown(
+        divDown(
+            constants.WeiPerEther,
+            mulDown(f, constants.WeiPerEther.sub(mulDown(ls, mulDown(c, c))))
+        ),
+        divDown(constants.WeiPerEther, mulDown(mulDown(lambda, lambda), R)).add(
+            divDown(
+                mulDown(y0.sub(b), y0.sub(b)),
+                mulDown(
+                    mulDown(mulDown(lambda, lambda), mulDown(lambda, lambda)),
+                    mulDown(mulDown(R, R), R)
+                )
+            )
+        )
+    );
+    return returnValue;
+}
+
+function calculateNormalizedLiquidity(
+    balances,
+    params,
+    derived,
+    r,
+    fee,
+    tokenInIsToken0
+) {
+    if (tokenInIsToken0) {
+        return normalizedLiquidityXIn(balances, params, derived, fee, r);
+    } else {
+        return normalizedLiquidityYIn(balances, params, derived, fee, r);
+    }
+}
+function calculateInvariantWithError(balances, params, derived) {
+    const [x, y] = balances;
+    if (x.add(y).gt(MAX_BALANCES)) throw new Error('MAX ASSETS EXCEEDED');
+    const AtAChi = calcAtAChi(x, y, params, derived);
+    let [square_root, err] = calcInvariantSqrt(x, y, params, derived);
+    if (square_root.gt(0)) {
+        err = divUpMagU(err.add(1), square_root.mul(2));
+    } else {
+        err = err.gt(0)
+            ? sqrt(err, bignumber.BigNumber.from(5))
+            : bignumber.BigNumber.from(10).pow(9);
+    }
+    err = mulUpMagU(params.lambda, x.add(y))
+        .div(ONE_XP)
+        .add(err)
+        .add(1)
+        .mul(20);
+    const mulDenominator = divXpU(
+        ONE_XP,
+        calcAChiAChiInXp(params, derived).sub(ONE_XP)
+    );
+    const invariant = mulDownXpToNpU(
+        AtAChi.add(square_root).sub(err),
+        mulDenominator
+    );
+    err = mulUpXpToNpU(err, mulDenominator);
+    err = err
+        .add(
+            mulUpXpToNpU(invariant, mulDenominator)
+                .mul(
+                    params.lambda
+                        .mul(params.lambda)
+                        .div(bignumber.BigNumber.from(10).pow(36))
+                )
+                .mul(40)
+                .div(ONE_XP)
+        )
+        .add(1);
+    if (invariant.add(err).gt(MAX_INVARIANT))
+        throw new Error('MAX INVARIANT EXCEEDED');
+    return [invariant, err];
+}
+function calcOutGivenIn(
+    balances,
+    amountIn,
+    tokenInIsToken0,
+    params,
+    derived,
+    invariant
+) {
+    if (amountIn.lt(SMALL)) return bignumber.BigNumber.from(0);
+    const ixIn = Number(!tokenInIsToken0);
+    const ixOut = Number(tokenInIsToken0);
+    const calcGiven = tokenInIsToken0 ? calcYGivenX : calcXGivenY;
+    const balInNew = balances[ixIn].add(amountIn);
+    checkAssetBounds(params, derived, invariant, balInNew, ixIn);
+    const balOutNew = calcGiven(balInNew, params, derived, invariant);
+    const amountOut = balances[ixOut].sub(balOutNew);
+    if (amountOut.lt(0)) {
+        // Should never happen; check anyways to catch a numerical bug.
+        throw new Error('ASSET BOUNDS EXCEEDED 1');
+    }
+    return amountOut;
+}
+function calcInGivenOut(
+    balances,
+    amountOut,
+    tokenInIsToken0,
+    params,
+    derived,
+    invariant
+) {
+    if (amountOut.lt(SMALL)) return bignumber.BigNumber.from(0);
+    const ixIn = Number(!tokenInIsToken0);
+    const ixOut = Number(tokenInIsToken0);
+    const calcGiven = tokenInIsToken0 ? calcXGivenY : calcYGivenX;
+    if (amountOut.gt(balances[ixOut]))
+        throw new Error('ASSET BOUNDS EXCEEDED 2');
+    const balOutNew = balances[ixOut].sub(amountOut);
+    const balInNew = calcGiven(balOutNew, params, derived, invariant);
+    checkAssetBounds(params, derived, invariant, balInNew, ixIn);
+    const amountIn = balInNew.sub(balances[ixIn]);
+    if (amountIn.lt(0))
+        // Should never happen; check anyways to catch a numerical bug.
+        throw new Error('ASSET BOUNDS EXCEEDED 3');
+    return amountIn;
+}
+function calcSpotPriceAfterSwapOutGivenIn(
+    balances,
+    amountIn,
+    tokenInIsToken0,
+    params,
+    derived,
+    invariant,
+    swapFee
+) {
+    const ixIn = Number(!tokenInIsToken0);
+    const f = constants.WeiPerEther.sub(swapFee);
+    const calcSpotPriceGiven = tokenInIsToken0
+        ? calcSpotPriceYGivenX
+        : calcSpotPriceXGivenY;
+    const balInNew = balances[ixIn].add(amountIn);
+    const newSpotPriceFactor = calcSpotPriceGiven(
+        balInNew,
+        params,
+        derived,
+        invariant
+    );
+    return divDown(constants.WeiPerEther, mulDown(newSpotPriceFactor, f));
+}
+function calcSpotPriceAfterSwapInGivenOut(
+    balances,
+    amountOut,
+    tokenInIsToken0,
+    params,
+    derived,
+    invariant,
+    swapFee
+) {
+    const ixOut = Number(tokenInIsToken0);
+    const f = constants.WeiPerEther.sub(swapFee);
+    const calcSpotPriceGiven = tokenInIsToken0
+        ? calcSpotPriceXGivenY
+        : calcSpotPriceYGivenX;
+    const balOutNew = balances[ixOut].sub(amountOut);
+    const newSpotPriceFactor = calcSpotPriceGiven(
+        balOutNew,
+        params,
+        derived,
+        invariant
+    );
+    return divDown(newSpotPriceFactor, f);
+}
+function calcDerivativePriceAfterSwapOutGivenIn(
+    balances,
+    tokenInIsToken0,
+    params,
+    derived,
+    invariant,
+    swapFee
+) {
+    const ixIn = Number(!tokenInIsToken0);
+    const newDerivativeSpotPriceFactor = ixIn
+        ? dPxDYIn(balances, params, derived, swapFee, invariant)
+        : dPyDXIn(balances, params, derived, swapFee, invariant);
+    return newDerivativeSpotPriceFactor;
+}
+function calcDerivativeSpotPriceAfterSwapInGivenOut(
+    balances,
+    tokenInIsToken0,
+    params,
+    derived,
+    invariant,
+    swapFee
+) {
+    const ixIn = Number(!tokenInIsToken0);
+    const newDerivativeSpotPriceFactor = ixIn
+        ? dPxDXOut(balances, params, derived, swapFee, invariant)
+        : dPyDYOut(balances, params, derived, swapFee, invariant);
+    return newDerivativeSpotPriceFactor;
+}
+
+class GyroEPool {
+    constructor(
+        id,
+        address,
+        swapFee,
+        totalShares,
+        tokens,
+        tokensList,
+        gyroEParams,
+        derivedGyroEParams
+    ) {
+        this.poolType = exports.PoolTypes.GyroE;
+        this.id = id;
+        this.address = address;
+        this.swapFee = safeParseFixed(swapFee, 18);
+        this.totalShares = safeParseFixed(totalShares, 18);
+        this.tokens = tokens;
+        this.tokensList = tokensList;
+        this.gyroEParams = {
+            alpha: safeParseFixed(gyroEParams.alpha, 18),
+            beta: safeParseFixed(gyroEParams.beta, 18),
+            c: safeParseFixed(gyroEParams.c, 18),
+            s: safeParseFixed(gyroEParams.s, 18),
+            lambda: safeParseFixed(gyroEParams.lambda, 18),
+        };
+        this.derivedGyroEParams = {
+            tauAlpha: {
+                x: safeParseFixed(derivedGyroEParams.tauAlphaX, 38),
+                y: safeParseFixed(derivedGyroEParams.tauAlphaY, 38),
+            },
+            tauBeta: {
+                x: safeParseFixed(derivedGyroEParams.tauBetaX, 38),
+                y: safeParseFixed(derivedGyroEParams.tauBetaY, 38),
+            },
+            u: safeParseFixed(derivedGyroEParams.u, 38),
+            v: safeParseFixed(derivedGyroEParams.v, 38),
+            w: safeParseFixed(derivedGyroEParams.w, 38),
+            z: safeParseFixed(derivedGyroEParams.z, 38),
+            dSq: safeParseFixed(derivedGyroEParams.dSq, 38),
+        };
+    }
+    static fromPool(pool) {
+        const {
+            alpha,
+            beta,
+            c,
+            s,
+            lambda,
+            tauAlphaX,
+            tauAlphaY,
+            tauBetaX,
+            tauBetaY,
+            u,
+            v,
+            w,
+            z,
+            dSq,
+        } = pool;
+        const gyroEParams = {
+            alpha,
+            beta,
+            c,
+            s,
+            lambda,
+        };
+        const derivedGyroEParams = {
+            tauAlphaX,
+            tauAlphaY,
+            tauBetaX,
+            tauBetaY,
+            u,
+            v,
+            w,
+            z,
+            dSq,
+        };
+        if (
+            !Object.values(gyroEParams).every((el) => el) ||
+            !Object.values(derivedGyroEParams).every((el) => el)
+        )
+            throw new Error(
+                'Pool missing GyroE params and/or GyroE derived params'
+            );
+        return new GyroEPool(
+            pool.id,
+            pool.address,
+            pool.swapFee,
+            pool.totalShares,
+            pool.tokens,
+            pool.tokensList,
+            gyroEParams,
+            derivedGyroEParams
+        );
+    }
+    parsePoolPairData(tokenIn, tokenOut) {
+        const tokenInIndex = this.tokens.findIndex(
+            (t) => address.getAddress(t.address) === address.getAddress(tokenIn)
+        );
+        if (tokenInIndex < 0) throw 'Pool does not contain tokenIn';
+        const tI = this.tokens[tokenInIndex];
+        const balanceIn = tI.balance;
+        const decimalsIn = tI.decimals;
+        const tokenOutIndex = this.tokens.findIndex(
+            (t) =>
+                address.getAddress(t.address) === address.getAddress(tokenOut)
+        );
+        if (tokenOutIndex < 0) throw 'Pool does not contain tokenOut';
+        const tO = this.tokens[tokenOutIndex];
+        const balanceOut = tO.balance;
+        const decimalsOut = tO.decimals;
+        const tokenInIsToken0 = tokenInIndex === 0;
+        const poolPairData = {
+            id: this.id,
+            address: this.address,
+            poolType: this.poolType,
+            tokenIn: tokenIn,
+            tokenOut: tokenOut,
+            decimalsIn: Number(decimalsIn),
+            decimalsOut: Number(decimalsOut),
+            balanceIn: safeParseFixed(balanceIn, decimalsIn),
+            balanceOut: safeParseFixed(balanceOut, decimalsOut),
+            swapFee: this.swapFee,
+            tokenInIsToken0,
+        };
+        return poolPairData;
+    }
+    getNormalizedLiquidity(poolPairData) {
+        const normalizedBalances = normalizeBalances(
+            [poolPairData.balanceIn, poolPairData.balanceOut],
+            [poolPairData.decimalsIn, poolPairData.decimalsOut]
+        );
+        const orderedNormalizedBalances = balancesFromTokenInOut(
             normalizedBalances[0],
             normalizedBalances[1],
-            inAmountLessFee,
-            virtualOffsetInOut
+            poolPairData.tokenInIsToken0
         );
-        const derivative = _derivativeSpotPriceAfterSwapExactTokenInForTokenOut(
-            normalizedBalances,
+        const [currentInvariant, invErr] = calculateInvariantWithError(
+            orderedNormalizedBalances,
+            this.gyroEParams,
+            this.derivedGyroEParams
+        );
+        const invariant = {
+            x: currentInvariant.add(invErr.mul(2)),
+            y: currentInvariant,
+        };
+        const normalizedLiquidity = calculateNormalizedLiquidity(
+            orderedNormalizedBalances,
+            this.gyroEParams,
+            this.derivedGyroEParams,
+            invariant,
+            this.swapFee,
+            poolPairData.tokenInIsToken0
+        );
+        return bnum(bignumber.formatFixed(normalizedLiquidity, 18));
+    }
+    getLimitAmountSwap(poolPairData, swapType) {
+        if (swapType === exports.SwapTypes.SwapExactIn) {
+            const normalizedBalances = normalizeBalances(
+                [poolPairData.balanceIn, poolPairData.balanceOut],
+                [poolPairData.decimalsIn, poolPairData.decimalsOut]
+            );
+            const orderedNormalizedBalances = balancesFromTokenInOut(
+                normalizedBalances[0],
+                normalizedBalances[1],
+                poolPairData.tokenInIsToken0
+            );
+            const [currentInvariant, invErr] = calculateInvariantWithError(
+                orderedNormalizedBalances,
+                this.gyroEParams,
+                this.derivedGyroEParams
+            );
+            const invariant = {
+                x: currentInvariant.add(invErr.mul(2)),
+                y: currentInvariant,
+            };
+            const virtualOffsetFunc = poolPairData.tokenInIsToken0
+                ? virtualOffset0
+                : virtualOffset1;
+            const maxAmountInAssetInPool = virtualOffsetFunc(
+                this.gyroEParams,
+                this.derivedGyroEParams,
+                invariant
+            ).sub(
+                virtualOffsetFunc(
+                    this.gyroEParams,
+                    this.derivedGyroEParams,
+                    invariant,
+                    true
+                )
+            );
+            const limitAmountIn = maxAmountInAssetInPool.sub(
+                normalizedBalances[0]
+            );
+            const limitAmountInPlusSwapFee = divDown(
+                limitAmountIn,
+                constants.WeiPerEther.sub(poolPairData.swapFee)
+            );
+            return bnum(
+                bignumber.formatFixed(
+                    mulDown(limitAmountInPlusSwapFee, SWAP_LIMIT_FACTOR),
+                    18
+                )
+            );
+        } else {
+            return bnum(
+                bignumber.formatFixed(
+                    mulDown(poolPairData.balanceOut, SWAP_LIMIT_FACTOR),
+                    poolPairData.decimalsOut
+                )
+            );
+        }
+    }
+    // Updates the balance of a given token for the pool
+    updateTokenBalanceForPool(token, newBalance) {
+        // token is BPT
+        if (this.address == token) {
+            this.totalShares = newBalance;
+        } else {
+            // token is underlying in the pool
+            const T = this.tokens.find((t) => isSameAddress(t.address, token));
+            if (!T) throw Error('Pool does not contain this token');
+            T.balance = bignumber.formatFixed(newBalance, T.decimals);
+        }
+    }
+    _exactTokenInForTokenOut(poolPairData, amount) {
+        const normalizedBalances = normalizeBalances(
+            [poolPairData.balanceIn, poolPairData.balanceOut],
+            [poolPairData.decimalsIn, poolPairData.decimalsOut]
+        );
+        const orderedNormalizedBalances = balancesFromTokenInOut(
+            normalizedBalances[0],
+            normalizedBalances[1],
+            poolPairData.tokenInIsToken0
+        );
+        const [currentInvariant, invErr] = calculateInvariantWithError(
+            orderedNormalizedBalances,
+            this.gyroEParams,
+            this.derivedGyroEParams
+        );
+        const invariant = {
+            x: currentInvariant.add(invErr.mul(2)),
+            y: currentInvariant,
+        };
+        const inAmount = safeParseFixed(amount.toString(), 18);
+        const inAmountLessFee = reduceFee(inAmount, poolPairData.swapFee);
+        const outAmount = calcOutGivenIn(
+            orderedNormalizedBalances,
+            inAmountLessFee,
+            poolPairData.tokenInIsToken0,
+            this.gyroEParams,
+            this.derivedGyroEParams,
+            invariant
+        );
+        return bnum(bignumber.formatFixed(outAmount, 18));
+    }
+    _tokenInForExactTokenOut(poolPairData, amount) {
+        const normalizedBalances = normalizeBalances(
+            [poolPairData.balanceIn, poolPairData.balanceOut],
+            [poolPairData.decimalsIn, poolPairData.decimalsOut]
+        );
+        const orderedNormalizedBalances = balancesFromTokenInOut(
+            normalizedBalances[0],
+            normalizedBalances[1],
+            poolPairData.tokenInIsToken0
+        );
+        const [currentInvariant, invErr] = calculateInvariantWithError(
+            orderedNormalizedBalances,
+            this.gyroEParams,
+            this.derivedGyroEParams
+        );
+        const invariant = {
+            x: currentInvariant.add(invErr.mul(2)),
+            y: currentInvariant,
+        };
+        const outAmount = safeParseFixed(amount.toString(), 18);
+        const inAmountLessFee = calcInGivenOut(
+            orderedNormalizedBalances,
             outAmount,
-            virtualOffsetInOut
+            poolPairData.tokenInIsToken0,
+            this.gyroEParams,
+            this.derivedGyroEParams,
+            invariant
+        );
+        const inAmount = addFee(inAmountLessFee, poolPairData.swapFee);
+        return bnum(bignumber.formatFixed(inAmount, 18));
+    }
+    _spotPriceAfterSwapExactTokenInForTokenOut(poolPairData, amount) {
+        const normalizedBalances = normalizeBalances(
+            [poolPairData.balanceIn, poolPairData.balanceOut],
+            [poolPairData.decimalsIn, poolPairData.decimalsOut]
+        );
+        const orderedNormalizedBalances = balancesFromTokenInOut(
+            normalizedBalances[0],
+            normalizedBalances[1],
+            poolPairData.tokenInIsToken0
+        );
+        const [currentInvariant, invErr] = calculateInvariantWithError(
+            orderedNormalizedBalances,
+            this.gyroEParams,
+            this.derivedGyroEParams
+        );
+        const invariant = {
+            x: currentInvariant.add(invErr.mul(2)),
+            y: currentInvariant,
+        };
+        const inAmount = safeParseFixed(amount.toString(), 18);
+        const inAmountLessFee = reduceFee(inAmount, poolPairData.swapFee);
+        const newSpotPrice = calcSpotPriceAfterSwapOutGivenIn(
+            orderedNormalizedBalances,
+            inAmountLessFee,
+            poolPairData.tokenInIsToken0,
+            this.gyroEParams,
+            this.derivedGyroEParams,
+            invariant,
+            poolPairData.swapFee
+        );
+        return bnum(bignumber.formatFixed(newSpotPrice, 18));
+    }
+    _spotPriceAfterSwapTokenInForExactTokenOut(poolPairData, amount) {
+        const normalizedBalances = normalizeBalances(
+            [poolPairData.balanceIn, poolPairData.balanceOut],
+            [poolPairData.decimalsIn, poolPairData.decimalsOut]
+        );
+        const orderedNormalizedBalances = balancesFromTokenInOut(
+            normalizedBalances[0],
+            normalizedBalances[1],
+            poolPairData.tokenInIsToken0
+        );
+        const [currentInvariant, invErr] = calculateInvariantWithError(
+            orderedNormalizedBalances,
+            this.gyroEParams,
+            this.derivedGyroEParams
+        );
+        const invariant = {
+            x: currentInvariant.add(invErr.mul(2)),
+            y: currentInvariant,
+        };
+        const outAmount = safeParseFixed(amount.toString(), 18);
+        const newSpotPrice = calcSpotPriceAfterSwapInGivenOut(
+            orderedNormalizedBalances,
+            outAmount,
+            poolPairData.tokenInIsToken0,
+            this.gyroEParams,
+            this.derivedGyroEParams,
+            invariant,
+            poolPairData.swapFee
+        );
+        return bnum(bignumber.formatFixed(newSpotPrice, 18));
+    }
+    _derivativeSpotPriceAfterSwapExactTokenInForTokenOut(poolPairData, amount) {
+        const inAmount = safeParseFixed(amount.toString(), 18);
+        const normalizedBalances = normalizeBalances(
+            [poolPairData.balanceIn, poolPairData.balanceOut],
+            [poolPairData.decimalsIn, poolPairData.decimalsOut]
+        );
+        const orderedNormalizedBalances = balancesFromTokenInOut(
+            normalizedBalances[0],
+            normalizedBalances[1],
+            poolPairData.tokenInIsToken0
+        );
+        const [currentInvariant, invErr] = calculateInvariantWithError(
+            orderedNormalizedBalances,
+            this.gyroEParams,
+            this.derivedGyroEParams
+        );
+        const invariant = {
+            x: currentInvariant.add(invErr.mul(2)),
+            y: currentInvariant,
+        };
+        const derivative = calcDerivativePriceAfterSwapOutGivenIn(
+            [
+                orderedNormalizedBalances[0].add(
+                    reduceFee(inAmount, poolPairData.swapFee)
+                ),
+                orderedNormalizedBalances[1],
+            ],
+            poolPairData.tokenInIsToken0,
+            this.gyroEParams,
+            this.derivedGyroEParams,
+            invariant,
+            poolPairData.swapFee
         );
         return bnum(bignumber.formatFixed(derivative, 18));
     }
     _derivativeSpotPriceAfterSwapTokenInForExactTokenOut(poolPairData, amount) {
-        const outAmount = bignumber.parseFixed(amount.toString(), 18);
-        const balances = [
-            poolPairData.balanceIn,
-            poolPairData.balanceOut,
-            poolPairData.balanceTertiary,
-        ];
-        const decimals = [
-            poolPairData.decimalsIn,
-            poolPairData.decimalsOut,
-            poolPairData.decimalsTertiary,
-        ];
-        const normalizedBalances = _normalizeBalances(balances, decimals);
-        const invariant = _calculateInvariant(
-            normalizedBalances,
-            this.root3Alpha
+        const normalizedBalances = normalizeBalances(
+            [poolPairData.balanceIn, poolPairData.balanceOut],
+            [poolPairData.decimalsIn, poolPairData.decimalsOut]
         );
-        const virtualOffsetInOut = mulDown(invariant, this.root3Alpha);
-        const inAmountLessFee = _calcInGivenOut(
+        const orderedNormalizedBalances = balancesFromTokenInOut(
             normalizedBalances[0],
             normalizedBalances[1],
-            outAmount,
-            virtualOffsetInOut
+            poolPairData.tokenInIsToken0
         );
-        const inAmount = _addFee(inAmountLessFee, poolPairData.swapFee);
-        const derivative = _derivativeSpotPriceAfterSwapTokenInForExactTokenOut(
-            normalizedBalances,
-            inAmount,
-            outAmount,
-            virtualOffsetInOut,
+        const [currentInvariant, invErr] = calculateInvariantWithError(
+            orderedNormalizedBalances,
+            this.gyroEParams,
+            this.derivedGyroEParams
+        );
+        const invariant = {
+            x: currentInvariant.add(invErr.mul(2)),
+            y: currentInvariant,
+        };
+        const outAmount = safeParseFixed(amount.toString(), 18);
+        const derivative = calcDerivativeSpotPriceAfterSwapInGivenOut(
+            [
+                orderedNormalizedBalances[0],
+                orderedNormalizedBalances[1].sub(outAmount),
+            ],
+            poolPairData.tokenInIsToken0,
+            this.gyroEParams,
+            this.derivedGyroEParams,
+            invariant,
             poolPairData.swapFee
         );
         return bnum(bignumber.formatFixed(derivative, 18));
@@ -12786,6 +14340,7 @@ function parseNewPool(pool, currentBlockTimestamp = 0) {
             newPool = PhantomStablePool.fromPool(pool);
         else if (pool.poolType === 'Gyro2') newPool = Gyro2Pool.fromPool(pool);
         else if (pool.poolType === 'Gyro3') newPool = Gyro3Pool.fromPool(pool);
+        else if (pool.poolType === 'GyroE') newPool = GyroEPool.fromPool(pool);
         else {
             console.error(
                 `Unknown pool type or type field missing: ${pool.poolType} ${pool.id}`
@@ -12836,6 +14391,7 @@ const PRICE_ERROR_TOLERANCE = new BigNumber(priceErrorTolerance);
 const infinitesimal = '0.01'; // Increasing INFINITESIMAL to '0.01' to test derivative sensitivity
 const INFINITESIMAL = new BigNumber(infinitesimal);
 
+const MINIMUM_VALUE = bnum('0.000000000000000001');
 function getHighestLimitAmountsForPaths(paths, maxPools) {
     if (paths.length === 0) return [];
     const limitAmounts = [];
@@ -13026,6 +14582,7 @@ function getDerivativeSpotPriceAfterSwapForPath(path, swapType, amount) {
             ans = ans.plus(newTerm);
         }
     }
+    if (ans.eq(bnum(0))) ans = MINIMUM_VALUE;
     return ans;
 }
 // TODO: Add cases for pairType = [BPT->token, token->BPT] and poolType = [weighted, stable]
@@ -13374,6 +14931,7 @@ const formatSwaps$1 = (
                     swapAmountOut: amounts[i + 1].toString(),
                     tokenInDecimals: path.poolPairData[i].decimalsIn,
                     tokenOutDecimals: path.poolPairData[i].decimalsOut,
+                    returnAmount: amounts[amounts.length - 1].toString(),
                 };
                 pathSwaps.push(swap);
             }
@@ -13396,6 +14954,7 @@ const formatSwaps$1 = (
                     swapAmountOut: amounts[0].toString(),
                     tokenInDecimals: path.poolPairData[n - 1 - i].decimalsIn,
                     tokenOutDecimals: path.poolPairData[n - 1 - i].decimalsOut,
+                    returnAmount: amounts[0].toString(),
                 };
                 pathSwaps.unshift(swap);
             }
@@ -13486,20 +15045,29 @@ function getBestPathIds(originalPaths, swapType, swapAmounts, inputDecimals) {
             }
         });
         if (bestPathIndex === -1) {
-            return [[], []];
-        }
-        selectedPaths.push(paths[bestPathIndex]);
-        selectedPathExceedingAmounts.push(
-            swapAmount.minus(
-                bnum(
-                    bignumber.formatFixed(
-                        paths[bestPathIndex].limitAmount,
-                        inputDecimals
+            selectedPaths.push({
+                id: '',
+                swaps: [],
+                poolPairData: [],
+                limitAmount: bignumber.BigNumber.from('0'),
+                pools: [],
+            });
+            selectedPathExceedingAmounts.push(ZERO);
+            return;
+        } else {
+            selectedPaths.push(paths[bestPathIndex]);
+            selectedPathExceedingAmounts.push(
+                swapAmount.minus(
+                    bnum(
+                        bignumber.formatFixed(
+                            paths[bestPathIndex].limitAmount,
+                            inputDecimals
+                        )
                     )
                 )
-            )
-        );
-        paths.splice(bestPathIndex, 1); // Remove path from list
+            );
+            paths.splice(bestPathIndex, 1); // Remove path from list
+        }
     });
     return [selectedPaths, selectedPathExceedingAmounts];
 }
@@ -16223,6 +17791,7 @@ const formatSequence = (swapKind, sequence, tokenAddresses) => {
         sequence = sequence.reverse();
     }
     return sequence.map((swap, i) => {
+        var _a;
         // Multihop swaps can be executed by passing an `amountIn` value of zero for a swap. This will cause the amount out
         // of the previous swap to be used as the amount in of the current one. In such a scenario, `tokenIn` must equal the
         // previous swap's `tokenOut`.
@@ -16239,6 +17808,16 @@ const formatSequence = (swapKind, sequence, tokenAddresses) => {
                 .decimalPlaces(0, 1)
                 .toString();
         }
+        const scalingFactorReturn =
+            swapKind === exports.SwapTypes.SwapExactIn
+                ? swap.tokenOutDecimals
+                : swap.tokenInDecimals;
+        const returnScaled = scale(
+            bnum((_a = swap.returnAmount) !== null && _a !== void 0 ? _a : '0'),
+            scalingFactorReturn
+        )
+            .decimalPlaces(0, 1)
+            .toString();
         const assetInIndex = tokenAddresses.indexOf(swap.tokenIn);
         const assetOutIndex = tokenAddresses.indexOf(swap.tokenOut);
         return {
@@ -16247,6 +17826,7 @@ const formatSequence = (swapKind, sequence, tokenAddresses) => {
             assetOutIndex,
             amount: amountScaled,
             userData: '0x',
+            returnAmount: returnScaled,
         };
     });
 };
@@ -16344,8 +17924,28 @@ class PoolCacher {
     get finishedFetching() {
         return this._finishedFetching;
     }
-    getPools() {
-        return cloneDeep(this.pools);
+    getPools(useBpts) {
+        const pools = cloneDeep(this.pools);
+        // If we use join/exit paths add the pool token to its token list
+        if (useBpts) {
+            for (const pool of pools) {
+                if (
+                    pool.poolType === 'Weighted' ||
+                    pool.poolType === 'Investment'
+                ) {
+                    const BptAsToken = {
+                        address: pool.address,
+                        balance: pool.totalShares,
+                        decimals: 18,
+                        priceRate: '1',
+                        weight: '0',
+                    };
+                    pool.tokens.push(BptAsToken);
+                    pool.tokensList.push(pool.address);
+                }
+            }
+        }
+        return pools;
     }
     /*
      * Saves updated pools data to internal cache.
@@ -16501,7 +18101,6 @@ function getBoostedGraph(tokenIn, tokenOut, poolsAllDict, config) {
     const phantomPools = [];
     const relevantRaisingTokens = [];
     // Here we add all linear pools, take note of phantom pools,
-    // add pools with tokenIn or tokenOut with weth,
     // add LBP pools with tokenIn or tokenOut and take note of the
     // corresponding raising tokens.
     for (const id in poolsAllDict) {
@@ -16517,20 +18116,6 @@ function getBoostedGraph(tokenIn, tokenOut, poolsAllDict, config) {
             );
             if (tokensList.includes(pool.address)) {
                 phantomPools.push(pool);
-            }
-            // adds pools having tokenIn or tokenOut with weth
-            if (
-                tokenIn != wethAddress &&
-                tokenOut != wethAddress &&
-                tokensList.includes(wethAddress)
-            ) {
-                if (
-                    tokensList.length <= 3 &&
-                    (tokensList.includes(tokenIn) ||
-                        tokensList.includes(tokenOut))
-                ) {
-                    graphPoolsSet.add(pool);
-                }
             }
             if (config.lbpRaisingTokens) {
                 const raisingTokens = config.lbpRaisingTokens.map((address) =>
@@ -16558,6 +18143,23 @@ function getBoostedGraph(tokenIn, tokenOut, poolsAllDict, config) {
                 }
             }
         }
+    }
+    // add highest liquidity pools with tokenIn and weth or tokenOut and weth
+    const bestTokenInToWeth = getHighestLiquidityPool(
+        tokenIn,
+        wethAddress,
+        poolsAllDict
+    );
+    if (bestTokenInToWeth) {
+        graphPoolsSet.add(poolsAllDict[bestTokenInToWeth]);
+    }
+    const bestWethToTokenOut = getHighestLiquidityPool(
+        wethAddress,
+        tokenOut,
+        poolsAllDict
+    );
+    if (bestWethToTokenOut) {
+        graphPoolsSet.add(poolsAllDict[bestWethToTokenOut]);
     }
     if (linearPools.length == 0) return {};
     const linearPoolsAddresses = linearPools.map((pool) => pool.address);
@@ -36526,8 +38128,8 @@ class SOR {
             tokenPriceService
         );
     }
-    getPools() {
-        return this.poolCacher.getPools();
+    getPools(useBpts) {
+        return this.poolCacher.getPools(useBpts);
     }
     /**
      * fetchPools Retrieves pools information and saves to internal pools cache.
@@ -36561,9 +38163,18 @@ class SOR {
      * @param {string} tokenOut - Address of tokenOut.
      * @param {SwapTypes} swapType - SwapExactIn where the amount of tokens in (sent to the Pool) is known or SwapExactOut where the amount of tokens out (received from the Pool) is known.
      * @param {BigNumberish} swapAmount - Either amountIn or amountOut depending on the `swapType` value.
-     * @returns {SwapInfo} Swap information including return amount and swaps structure to be submitted to Vault.
+     * @param swapOptions
+     * @param useBpts Set to true to consider join/exit weighted pool paths (these will need formatted and submitted via Relayer)
+     * @returns Swap information including return amount and swaps structure to be submitted to Vault.
      */
-    getSwaps(tokenIn, tokenOut, swapType, swapAmount, swapOptions) {
+    getSwaps(
+        tokenIn,
+        tokenOut,
+        swapType,
+        swapAmount,
+        swapOptions,
+        useBpts = false
+    ) {
         return __awaiter(this, void 0, void 0, function* () {
             if (!this.poolCacher.finishedFetching)
                 return cloneDeep(EMPTY_SWAPINFO);
@@ -36572,7 +38183,11 @@ class SOR {
                 Object.assign({}, this.defaultSwapOptions),
                 swapOptions
             );
-            const pools = this.poolCacher.getPools();
+            if (this.useBpt !== useBpts) {
+                options.forceRefresh = true;
+                this.useBpt = useBpts;
+            }
+            const pools = this.poolCacher.getPools(useBpts);
             const filteredPools = filterPoolsByType(
                 pools,
                 options.poolTypeFilter

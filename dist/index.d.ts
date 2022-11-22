@@ -44,6 +44,7 @@ declare enum PoolTypes {
     Linear = 4,
     Gyro2 = 5,
     Gyro3 = 6,
+    GyroE = 7,
 }
 interface SwapOptions {
     gasPrice: BigNumber$1;
@@ -75,6 +76,7 @@ interface Swap {
     maxPrice?: string;
     tokenInDecimals: number;
     tokenOutDecimals: number;
+    returnAmount?: string;
 }
 interface SubgraphPoolBase {
     id: string;
@@ -98,6 +100,20 @@ interface SubgraphPoolBase {
     sqrtAlpha?: string;
     sqrtBeta?: string;
     root3Alpha?: string;
+    alpha?: string;
+    beta?: string;
+    c?: string;
+    s?: string;
+    lambda?: string;
+    tauAlphaX?: string;
+    tauAlphaY?: string;
+    tauBetaX?: string;
+    tauBetaY?: string;
+    u?: string;
+    v?: string;
+    w?: string;
+    z?: string;
+    dSq?: string;
     factory?: string;
 }
 declare type SubgraphToken = {
@@ -113,6 +129,7 @@ interface SwapV2 {
     assetOutIndex: number;
     amount: string;
     userData: string;
+    returnAmount?: string;
 }
 interface SwapInfo {
     tokenAddresses: string[];
@@ -172,9 +189,10 @@ declare enum PoolFilter {
     AaveLinear = 'AaveLinear',
     StablePhantom = 'StablePhantom',
     ERC4626Linear = 'ERC4626Linear',
+    ComposableStable = 'ComposableStable',
     Gyro2 = 'Gyro2',
     Gyro3 = 'Gyro3',
-    ComposableStable = 'ComposableStable',
+    GyroE = 'GyroE',
 }
 interface PoolBase {
     poolType: PoolTypes;
@@ -231,7 +249,7 @@ interface PoolDataService {
     getPools(): Promise<SubgraphPoolBase[]>;
 }
 
-declare enum PairTypes$1 {
+declare enum PairTypes$2 {
     BptToMainToken = 0,
     MainTokenToBpt = 1,
     MainTokenToWrappedToken = 2,
@@ -244,7 +262,7 @@ declare type LinearPoolToken = Pick<
     'address' | 'balance' | 'decimals' | 'priceRate'
 >;
 declare type LinearPoolPairData = PoolPairBase & {
-    pairType: PairTypes$1;
+    pairType: PairTypes$2;
     wrappedBalance: BigNumber;
     wrappedBalanceScaled: BigNumber$1;
     wrappedDecimals: number;
@@ -447,6 +465,7 @@ declare class SOR {
     private readonly poolCacher;
     readonly routeProposer: RouteProposer$1;
     readonly swapCostCalculator: SwapCostCalculator;
+    private useBpt;
     private readonly defaultSwapOptions;
     /**
      * @param {Provider} provider - Provider.
@@ -460,7 +479,7 @@ declare class SOR {
         poolDataService: PoolDataService,
         tokenPriceService: TokenPriceService
     );
-    getPools(): SubgraphPoolBase[];
+    getPools(useBpts?: boolean): SubgraphPoolBase[];
     /**
      * fetchPools Retrieves pools information and saves to internal pools cache.
      * @returns {boolean} True if pools fetched successfully, False if not.
@@ -476,14 +495,17 @@ declare class SOR {
      * @param {string} tokenOut - Address of tokenOut.
      * @param {SwapTypes} swapType - SwapExactIn where the amount of tokens in (sent to the Pool) is known or SwapExactOut where the amount of tokens out (received from the Pool) is known.
      * @param {BigNumberish} swapAmount - Either amountIn or amountOut depending on the `swapType` value.
-     * @returns {SwapInfo} Swap information including return amount and swaps structure to be submitted to Vault.
+     * @param swapOptions
+     * @param useBpts Set to true to consider join/exit weighted pool paths (these will need formatted and submitted via Relayer)
+     * @returns Swap information including return amount and swaps structure to be submitted to Vault.
      */
     getSwaps(
         tokenIn: string,
         tokenOut: string,
         swapType: SwapTypes,
         swapAmount: BigNumberish,
-        swapOptions?: Partial<SwapOptions>
+        swapOptions?: Partial<SwapOptions>,
+        useBpts?: boolean
     ): Promise<SwapInfo>;
     /**
      * getCostOfSwapInToken Calculates and saves price of a swap in outputToken denomination. Used to determine if extra swaps are cost effective.
@@ -616,11 +638,17 @@ declare function parseToPoolsDict(
     timestamp: number
 ): PoolDictionary;
 
+declare enum PairTypes$1 {
+    BptToToken = 0,
+    TokenToBpt = 1,
+    TokenToToken = 2,
+}
 declare type WeightedPoolToken = Pick<
     NoNullableField<SubgraphToken>,
     'address' | 'balance' | 'decimals' | 'weight'
 >;
 declare type WeightedPoolPairData = PoolPairBase & {
+    pairType: PairTypes$1;
     weightIn: BigNumber$1;
     weightOut: BigNumber$1;
 };
@@ -973,6 +1001,13 @@ declare function _calcBptInGivenExactTokensOut$1(
     bptTotalSupply: bigint,
     swapFeePercentage: bigint
 ): bigint;
+declare const _calcTokenInGivenExactBptOut$1: (
+    balance: bigint,
+    normalizedWeight: bigint,
+    bptAmountOut: bigint,
+    bptTotalSupply: bigint,
+    swapFee: bigint
+) => bigint;
 declare function _calculateInvariant(
     normalizedWeights: bigint[],
     balances: bigint[]
@@ -983,6 +1018,33 @@ declare function _calcDueProtocolSwapFeeBptAmount(
     currentInvariant: bigint,
     protocolSwapFeePercentage: bigint
 ): bigint;
+declare function _spotPriceAfterSwapExactTokenInForTokenOut$2(
+    amount: BigNumber,
+    poolPairData: WeightedPoolPairData
+): BigNumber;
+declare function _spotPriceAfterSwapTokenInForExactTokenOut$2(
+    amount: BigNumber,
+    poolPairData: WeightedPoolPairData
+): BigNumber;
+declare function _spotPriceAfterSwapExactTokenInForBPTOut$1(
+    amount: BigNumber,
+    poolPairData: WeightedPoolPairData
+): BigNumber;
+declare function _spotPriceAfterSwapBptOutGivenExactTokenInBigInt(
+    balanceIn: bigint,
+    balanceOut: bigint,
+    weightIn: bigint,
+    amountIn: bigint,
+    swapFeeRatio: bigint
+): bigint;
+declare function _spotPriceAfterSwapExactBPTInForTokenOut$1(
+    amount: BigNumber,
+    poolPairData: WeightedPoolPairData
+): BigNumber;
+declare function _spotPriceAfterSwapBPTInForExactTokenOut$1(
+    amount: BigNumber,
+    poolPairData: WeightedPoolPairData
+): BigNumber;
 declare function _spotPriceAfterSwapTokenInForExactBPTOut$2(
     amount: BigNumber,
     poolPairData: WeightedPoolPairData
@@ -995,11 +1057,19 @@ declare function _derivativeSpotPriceAfterSwapTokenInForExactTokenOut$1(
     amount: BigNumber,
     poolPairData: WeightedPoolPairData
 ): BigNumber;
-declare function _spotPriceAfterSwapExactTokenInForTokenOut$2(
+declare function _derivativeSpotPriceAfterSwapExactTokenInForBPTOut(
     amount: BigNumber,
     poolPairData: WeightedPoolPairData
 ): BigNumber;
-declare function _spotPriceAfterSwapTokenInForExactTokenOut$2(
+declare function _derivativeSpotPriceAfterSwapTokenInForExactBPTOut(
+    amount: BigNumber,
+    poolPairData: WeightedPoolPairData
+): BigNumber;
+declare function _derivativeSpotPriceAfterSwapExactBPTInForTokenOut(
+    amount: BigNumber,
+    poolPairData: WeightedPoolPairData
+): BigNumber;
+declare function _derivativeSpotPriceAfterSwapBPTInForExactTokenOut(
     amount: BigNumber,
     poolPairData: WeightedPoolPairData
 ): BigNumber;
@@ -1008,6 +1078,11 @@ declare const weightedMath__spotPriceAfterSwapExactTokenInForTokenOutBigInt: typ
 declare const weightedMath__spotPriceAfterSwapTokenInForExactTokenOutBigInt: typeof _spotPriceAfterSwapTokenInForExactTokenOutBigInt;
 declare const weightedMath__calculateInvariant: typeof _calculateInvariant;
 declare const weightedMath__calcDueProtocolSwapFeeBptAmount: typeof _calcDueProtocolSwapFeeBptAmount;
+declare const weightedMath__spotPriceAfterSwapBptOutGivenExactTokenInBigInt: typeof _spotPriceAfterSwapBptOutGivenExactTokenInBigInt;
+declare const weightedMath__derivativeSpotPriceAfterSwapExactTokenInForBPTOut: typeof _derivativeSpotPriceAfterSwapExactTokenInForBPTOut;
+declare const weightedMath__derivativeSpotPriceAfterSwapTokenInForExactBPTOut: typeof _derivativeSpotPriceAfterSwapTokenInForExactBPTOut;
+declare const weightedMath__derivativeSpotPriceAfterSwapExactBPTInForTokenOut: typeof _derivativeSpotPriceAfterSwapExactBPTInForTokenOut;
+declare const weightedMath__derivativeSpotPriceAfterSwapBPTInForExactTokenOut: typeof _derivativeSpotPriceAfterSwapBPTInForExactTokenOut;
 declare namespace weightedMath {
     export {
         _calcOutGivenIn$1 as _calcOutGivenIn,
@@ -1018,13 +1093,22 @@ declare namespace weightedMath {
         _calcTokensOutGivenExactBptIn$1 as _calcTokensOutGivenExactBptIn,
         _calcTokenOutGivenExactBptIn$1 as _calcTokenOutGivenExactBptIn,
         _calcBptInGivenExactTokensOut$1 as _calcBptInGivenExactTokensOut,
+        _calcTokenInGivenExactBptOut$1 as _calcTokenInGivenExactBptOut,
         weightedMath__calculateInvariant as _calculateInvariant,
         weightedMath__calcDueProtocolSwapFeeBptAmount as _calcDueProtocolSwapFeeBptAmount,
+        _spotPriceAfterSwapExactTokenInForTokenOut$2 as _spotPriceAfterSwapExactTokenInForTokenOut,
+        _spotPriceAfterSwapTokenInForExactTokenOut$2 as _spotPriceAfterSwapTokenInForExactTokenOut,
+        _spotPriceAfterSwapExactTokenInForBPTOut$1 as _spotPriceAfterSwapExactTokenInForBPTOut,
+        weightedMath__spotPriceAfterSwapBptOutGivenExactTokenInBigInt as _spotPriceAfterSwapBptOutGivenExactTokenInBigInt,
+        _spotPriceAfterSwapExactBPTInForTokenOut$1 as _spotPriceAfterSwapExactBPTInForTokenOut,
+        _spotPriceAfterSwapBPTInForExactTokenOut$1 as _spotPriceAfterSwapBPTInForExactTokenOut,
         _spotPriceAfterSwapTokenInForExactBPTOut$2 as _spotPriceAfterSwapTokenInForExactBPTOut,
         _derivativeSpotPriceAfterSwapExactTokenInForTokenOut$1 as _derivativeSpotPriceAfterSwapExactTokenInForTokenOut,
         _derivativeSpotPriceAfterSwapTokenInForExactTokenOut$1 as _derivativeSpotPriceAfterSwapTokenInForExactTokenOut,
-        _spotPriceAfterSwapExactTokenInForTokenOut$2 as _spotPriceAfterSwapExactTokenInForTokenOut,
-        _spotPriceAfterSwapTokenInForExactTokenOut$2 as _spotPriceAfterSwapTokenInForExactTokenOut,
+        weightedMath__derivativeSpotPriceAfterSwapExactTokenInForBPTOut as _derivativeSpotPriceAfterSwapExactTokenInForBPTOut,
+        weightedMath__derivativeSpotPriceAfterSwapTokenInForExactBPTOut as _derivativeSpotPriceAfterSwapTokenInForExactBPTOut,
+        weightedMath__derivativeSpotPriceAfterSwapExactBPTInForTokenOut as _derivativeSpotPriceAfterSwapExactBPTInForTokenOut,
+        weightedMath__derivativeSpotPriceAfterSwapBPTInForExactTokenOut as _derivativeSpotPriceAfterSwapBPTInForExactTokenOut,
     };
 }
 
