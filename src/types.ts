@@ -58,6 +58,7 @@ export interface Swap {
     tokenIn: string;
     tokenOut: string;
     swapAmount?: string;
+    swapAmountOut?: string;
     limitReturnAmount?: string;
     maxPrice?: string;
     tokenInDecimals: number;
@@ -115,6 +116,8 @@ export interface SubgraphPoolBase {
     w?: string;
     z?: string;
     dSq?: string;
+    
+    factory?: string;
 }
 
 export type SubgraphToken = {
@@ -148,6 +151,25 @@ export interface SwapInfo {
     tokenOut: string;
     tokenOutFromSwaps?: string; // Used with stETH/wstETH
     marketSp: string;
+    routes: SwapInfoRoute[];
+}
+
+export interface SwapInfoRoute {
+    tokenIn: string;
+    tokenInAmount: string;
+    tokenOut: string;
+    tokenOutAmount: string;
+    share: number;
+    //hops in this route, properly ordered
+    hops: SwapInfoRouteHop[];
+}
+
+export interface SwapInfoRouteHop {
+    tokenIn: string;
+    tokenInAmount: string;
+    tokenOut: string;
+    tokenOutAmount: string;
+    poolId: string;
 }
 
 export interface PoolDictionary {
