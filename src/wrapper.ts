@@ -6,7 +6,7 @@ import { getBestPaths } from './router';
 import { getWrappedInfo, setWrappedInfo } from './wrapInfo';
 import { formatSwaps } from './formatSwaps';
 import { PoolCacher } from './poolCacher';
-import { RouteProposer } from './routeProposal';
+import { RouteProposer } from './beets/routeProposal';
 import { filterPoolsByType } from './routeProposal/filtering';
 import { SwapCostCalculator } from './swapCostCalculator';
 import { getLidoStaticSwaps, isLidoStableSwap } from './pools/lido';
@@ -70,9 +70,28 @@ export class SOR {
      * @returns {boolean} True if pools fetched successfully, False if not.
      */
     async fetchPools(): Promise<boolean> {
-        return this.poolCacher.fetchPools();
+        const success = await this.poolCacher.fetchPools();
+
+        //initialize the graph it is hasn't been yet
+        if (success && this.routeProposer.graph === null) {
+            this.routeProposer.initGraph(
+                this.getPools(),
+                this.defaultSwapOptions.timestamp
+            );
+        }
+
+        return success;
     }
+
     /**
+     * reloadGraph Reloads the route graph to reflect more recent pool data
+     */
+    reloadGraph() {
+        this.routeProposer.initGraph(
+            this.getPools(),
+            this.defaultSwapOptions.timestamp
+        );
+    }
 
     /**
      * getSwaps Retrieve information for best swap tokenIn>tokenOut.
@@ -80,7 +99,7 @@ export class SOR {
      * @param {string} tokenOut - Address of tokenOut.
      * @param {SwapTypes} swapType - SwapExactIn where the amount of tokens in (sent to the Pool) is known or SwapExactOut where the amount of tokens out (received from the Pool) is known.
      * @param {BigNumberish} swapAmount - Either amountIn or amountOut depending on the `swapType` value.
-     * @param swapOptions 
+     * @param swapOptions
      * @param useBpts Set to true to consider join/exit weighted pool paths (these will need formatted and submitted via Relayer)
      * @returns Swap information including return amount and swaps structure to be submitted to Vault.
      */

@@ -6,6 +6,7 @@ export enum Network {
     GOERLI = 5,
     KOVAN = 42,
     POLYGON = 137,
+    FANTOM = 250,
     ARBITRUM = 42161,
 }
 
@@ -43,6 +44,11 @@ export const SOR_CONFIG: Record<Network, SorConfig> = {
         vault: '0xBA12222222228d8Ba445958a75a0704d566BF2C8',
         weth: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
     },
+    [Network.FANTOM]: {
+        chainId: Network.FANTOM, //42161
+        vault: '0x20dd72Ed959b6147912C2e529F0a0C651c33c9ce',
+        weth: '0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83',
+    },
 };
 
 export const PROVIDER_URLS = {
@@ -51,6 +57,7 @@ export const PROVIDER_URLS = {
     [Network.KOVAN]: `https://kovan.infura.io/v3/${process.env.INFURA}`,
     [Network.POLYGON]: `https://polygon-mainnet.infura.io/v3/${process.env.INFURA}`,
     [Network.ARBITRUM]: `https://arbitrum-mainnet.infura.io/v3/${process.env.INFURA}`,
+    [Network.FANTOM]: `https://rpc.ftm.tools`,
 };
 
 export const MULTIADDR: { [chainId: number]: string } = {
@@ -62,6 +69,7 @@ export const MULTIADDR: { [chainId: number]: string } = {
     137: '0xa1B2b503959aedD81512C37e9dce48164ec6a94d',
     42161: '0x269ff446d9892c9e19082564df3f5e8741e190a1',
     99: '0xeefba1e63905ef1d7acba5a8513c70307c1ce441',
+    250: '0x66335d7ad8011f6aa3f48aadcb523b62b38ed961',
 };
 
 export const SUBGRAPH_URLS = {
@@ -74,10 +82,12 @@ export const SUBGRAPH_URLS = {
     [Network.POLYGON]:
         'https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-polygon-v2',
     [Network.ARBITRUM]: `https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-arbitrum-v2`,
+    [Network.FANTOM]: `https://api.thegraph.com/subgraphs/name/beethovenx/beethovenx-v2`,
 };
 
 // This is the same across networks
-export const vaultAddr = '0xBA12222222228d8Ba445958a75a0704d566BF2C8';
+// export const vaultAddr = '0xBA12222222228d8Ba445958a75a0704d566BF2C8';
+export const vaultAddr = '0x20dd72Ed959b6147912C2e529F0a0C651c33c9ce';
 
 export const ADDRESSES = {
     [Network.MAINNET]: {
@@ -150,7 +160,7 @@ export const ADDRESSES = {
             symbol: 'waUSDC',
         },
         bbausd2: {
-            address: '0xA13a9247ea42D743238089903570127DdA72fE44',
+            address: '0x9b532ab955417afd0d012eb9f7389457cd0ea712',
             decimals: 18,
             symbol: 'bbausd2',
         },
@@ -158,26 +168,6 @@ export const ADDRESSES = {
             address: '0xae37d54ae477268b9997d4161b96b8200755935c',
             decimals: 18,
             symbol: 'bb-a-dai2',
-        },
-        bbausdt2: {
-            address: '0x2F4eb100552ef93840d5aDC30560E5513DFfFACb',
-            decimals: 18,
-            symbol: 'bb-a-usdt2',
-        },
-        RPL: {
-            address: '0xD33526068D116cE69F19A9ee46F0bd304F21A51f',
-            decimals: 18,
-            symbol: 'RPL',
-        },
-        rETH: {
-            address: '0xae78736Cd615f374D3085123A210448E74Fc6393',
-            decimals: 18,
-            symbol: 'rETH',
-        },
-        auraBal: {
-            address: '0x616e8bfa43f920657b3497dbf40d6b1a02d4608d',
-            decimals: 18,
-            symbol: 'auraBal',
         },
     },
     [Network.KOVAN]: {
@@ -337,26 +327,6 @@ export const ADDRESSES = {
             decimals: 18,
             symbol: 'dUSD',
         },
-        TUSD: {
-            address: '0x2e1AD108fF1D8C782fcBbB89AAd783aC49586756',
-            decimals: 18,
-            symbol: 'TUSD',
-        },
-        TETUBAL: {
-            address: '0x7fC9E0Aa043787BFad28e29632AdA302C790Ce33',
-            decimals: 18,
-            symbol: 'TETUBAL',
-        },
-        WETHBAL: {
-            address: '0x3d468AB2329F296e1b9d8476Bb54Dd77D8c2320f',
-            decimals: 18,
-            symbol: 'WETHBAL',
-        },
-        bbamUSD: {
-            address: '0x48e6B98ef6329f8f0A30eBB8c7C960330d648085',
-            decimals: 18,
-            symbol: 'bb-am-usd',
-        },
     },
     [Network.ARBITRUM]: {
         WETH: {
@@ -378,6 +348,38 @@ export const ADDRESSES = {
             address: 'N/A',
             decimals: 18,
             symbol: 'STETH',
+        },
+    },
+    [Network.FANTOM]: {
+        FTM: {
+            address: '0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83',
+            decimals: 18,
+            symbol: 'FTM',
+        },
+        DEUS: {
+            address: '0xDE5ed76E7c05eC5e4572CfC88d1ACEA165109E44',
+            decimals: 18,
+            symbol: 'DEUS',
+        },
+        USDC: {
+            address: '0x04068DA6C83AFCFA0e13ba15A6696662335D5B75',
+            decimals: 6,
+            symbol: 'USDC',
+        },
+        DAI: {
+            address: '0x8D11eC38a3EB5E956B052f67Da8Bdc9bef8Abf3E',
+            decimals: 18,
+            symbol: 'DAI',
+        },
+        MAI: {
+            address: '0xfB98B335551a418cD0737375a2ea0ded62Ea213b',
+            decimals: 18,
+            symbol: 'MAI',
+        },
+        WETH: {
+            address: '0x74b23882a30290451A17c44f4F05243b6b58C76d',
+            decimals: 18,
+            symbol: 'WETH',
         },
     },
 };
