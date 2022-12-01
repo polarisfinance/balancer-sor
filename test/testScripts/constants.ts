@@ -381,5 +381,10 @@ export const ADDRESSES = {
             decimals: 18,
             symbol: 'WETH',
         },
+        QI: {
+            address: '0x68Aa691a8819B07988B18923F712F3f4C8d36346',
+            decimals: 18,
+            symbol: 'QI',
+        },
     },
 };
