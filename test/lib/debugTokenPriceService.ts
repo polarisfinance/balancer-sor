@@ -1,12 +1,66 @@
+import { Cache, CacheClass } from 'memory-cache';
 import fetch from 'isomorphic-fetch';
 import { TokenPriceService } from '../../src';
+import { SOR_CONFIG } from '../testScripts/constants';
+import { prisma } from './databasePoolDataService';
 
 export class DebugTokenPriceService implements TokenPriceService {
+    priceCace: CacheClass<string, number> = new Cache<string, number>();
     constructor(private readonly chainId: number) {}
 
     public async getNativeAssetPriceInToken(
         tokenAddress: string
     ): Promise<string> {
+        const nativeAssetAddress = SOR_CONFIG[this.chainId].weth.toLowerCase();
+        let normalizedTokenAddress = tokenAddress.toLowerCase();
+
+        // if (
+        //     normalizedTokenAddress === networkConfig.eth.address.toLowerCase()
+        // ) {
+        //     normalizedTokenAddress = networkConfig.weth.address.toLowerCase();
+        // }
+        const nativeAssetPrice = this.priceCace.get(nativeAssetAddress);
+        const tokenPrice = this.priceCace.get(normalizedTokenAddress);
+        if (nativeAssetPrice && tokenPrice) {
+            return `${nativeAssetPrice / tokenPrice}`;
+        } else {
+            const tokenPrices = await prisma.prismaTokenCurrentPrice.findMany({
+                where: {
+                    OR: [
+                        { tokenAddress: normalizedTokenAddress },
+                        { tokenAddress: nativeAssetAddress },
+                    ],
+                },
+            });
+            const tokenPrice = tokenPrices.find(
+                (price) => price.tokenAddress === normalizedTokenAddress
+            );
+            const nativeAssetPrice = tokenPrices.find(
+                (price) => price.tokenAddress === nativeAssetAddress
+            );
+
+            if (tokenPrice && nativeAssetPrice) {
+                this.priceCace.put(
+                    normalizedTokenAddress,
+                    tokenPrice.price,
+                    30 * 1000
+                );
+                this.priceCace.put(
+                    nativeAssetAddress,
+                    nativeAssetPrice.price,
+                    30 * 1000
+                );
+                const price = `${nativeAssetPrice.price / tokenPrice.price}`;
+                console.log(`Native asset price`, price);
+                return price;
+            } else {
+                console.log(
+                    `Missing token price: native: ${nativeAssetPrice}, token: ${tokenPrice}`
+                );
+                return '0';
+            }
+        }
+
         const ethPerToken = await this.getTokenPriceInNativeAsset(tokenAddress);
 
         // We get the price of token in terms of ETH
@@ -56,9 +110,10 @@ export class DebugTokenPriceService implements TokenPriceService {
         });
 
         const data = await response.json();
+        console.log(data);
 
-        if (data[tokenAddress.toLowerCase()]['usd'] === undefined) {
-            throw Error('No price returned from Coingecko');
+        if (data[tokenAddress.toLowerCase()] === undefined) {
+            throw Error(`No price returned from Coingecko for ${tokenAddress}`);
         }
 
         return data[tokenAddress.toLowerCase()]['usd'];
