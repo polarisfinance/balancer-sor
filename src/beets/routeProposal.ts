@@ -160,19 +160,41 @@ export class RouteProposer {
                 ...path.map((segment) => segment.tokenOut),
             ];
 
+            // this returns same hop twice in a path
+            // it expands the nested pools but doesn't check for duplicate pools again
+            // need to filter later
             return createPath(
                 tokens,
                 path
                     //TODO: look into why this is possible
-                    .filter((segment) => poolsAllDict[segment.poolId])
+                    // .filter((segment) => poolsAllDict[segment.poolId])  //no need to filter first
                     .map((segment) => poolsAllDict[segment.poolId]),
                 poolsAllAddressDict,
                 pathCache
             );
         });
 
-        const [pathsWithLimits] = calculatePathLimits(paths, swapType);
+        const nonDuplicatePaths: NewPath[] = [];
 
+        for (const path of paths) {
+            const poolsSeen: string[] = [];
+            let hasDuplicate = false;
+            for (const pool of path.pools) {
+                if (poolsSeen.includes(pool.id)) {
+                    hasDuplicate = true;
+                } else {
+                    poolsSeen.push(pool.id);
+                }
+            }
+            if (!hasDuplicate) {
+                nonDuplicatePaths.push(path);
+            }
+        }
+
+        const [pathsWithLimits] = calculatePathLimits(
+            nonDuplicatePaths,
+            swapType
+        );
         return pathsWithLimits;
     }
 }
