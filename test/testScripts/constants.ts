@@ -8,6 +8,7 @@ export enum Network {
     POLYGON = 137,
     FANTOM = 250,
     ARBITRUM = 42161,
+    OPTIMISM = 10,
 }
 
 export const SOR_CONFIG: Record<Network, SorConfig> = {
@@ -45,9 +46,14 @@ export const SOR_CONFIG: Record<Network, SorConfig> = {
         weth: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
     },
     [Network.FANTOM]: {
-        chainId: Network.FANTOM, //42161
+        chainId: Network.FANTOM, //250
         vault: '0x20dd72Ed959b6147912C2e529F0a0C651c33c9ce',
         weth: '0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83',
+    },
+    [Network.OPTIMISM]: {
+        chainId: Network.OPTIMISM, //10
+        vault: '0xBA12222222228d8Ba445958a75a0704d566BF2C8',
+        weth: '0x4200000000000000000000000000000000000006',
     },
 };
 
@@ -168,6 +174,36 @@ export const ADDRESSES = {
             address: '0xae37d54ae477268b9997d4161b96b8200755935c',
             decimals: 18,
             symbol: 'bb-a-dai2',
+        },
+        bbausdt2: {
+            address: '0x2F4eb100552ef93840d5aDC30560E5513DFfFACb',
+            decimals: 18,
+            symbol: 'bb-a-usdt2',
+        },
+        RPL: {
+            address: '0xD33526068D116cE69F19A9ee46F0bd304F21A51f',
+            decimals: 18,
+            symbol: 'RPL',
+        },
+        rETH: {
+            address: '0xae78736Cd615f374D3085123A210448E74Fc6393',
+            decimals: 18,
+            symbol: 'rETH',
+        },
+        auraBal: {
+            address: '0x616e8bfa43f920657b3497dbf40d6b1a02d4608d',
+            decimals: 18,
+            symbol: 'auraBal',
+        },
+        USDT: {
+            address: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+            decimals: 6,
+            symbol: 'USDT',
+        },
+        bbausdt: {
+            address: '0x2f4eb100552ef93840d5adc30560e5513dfffacb',
+            decimals: 18,
+            symbol: 'bbaUSDT',
         },
     },
     [Network.KOVAN]: {
@@ -385,6 +421,33 @@ export const ADDRESSES = {
             address: '0x68Aa691a8819B07988B18923F712F3f4C8d36346',
             decimals: 18,
             symbol: 'QI',
+        },
+        XDEUS: {
+            address: '0x953Cd009a490176FcEB3a26b9753e6F01645ff28',
+            decimals: 18,
+            symbol: 'XDEUS',
+        },
+    },
+    [Network.OPTIMISM]: {
+        ETH: {
+            address: AddressZero,
+            decimals: 18,
+            symbol: 'ETH',
+        },
+        USDC: {
+            address: '0x7F5c764cBc14f9669B88837ca1490cCa17c31607',
+            decimals: 6,
+            symbol: 'USDC',
+        },
+        WETH: {
+            address: '0x4200000000000000000000000000000000000006',
+            decimals: 18,
+            symbol: 'WETH',
+        },
+        RETH: {
+            address: '0x9Bcef72be871e61ED4fBbc7630889beE758eb81D',
+            decimals: 18,
+            symbol: 'RETH',
         },
     },
 };

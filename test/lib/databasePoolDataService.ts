@@ -1,5 +1,4 @@
 import { PoolDataService, SubgraphPoolBase } from '../../src';
-import { Provider } from '@ethersproject/providers';
 
 import { PrismaClient } from '@prisma/client';
 
@@ -14,6 +13,7 @@ export class DatabasePoolDataService implements PoolDataService {
             '0x6da14f5acd58dd5c8e486cfa1dc1c550f5c61c1c0000000000000000000003cf',
             // old DEI boosted
             '0xdfc65c1f15ad3507754ef0fd4ba67060c108db7e000000000000000000000406',
+            '0xf29d0e14d9cf0d2db13f4f9655e33d527267cf7e000200000000000000000747',
         ];
 
         const pools = await prisma.prismaPool.findMany({
@@ -29,6 +29,7 @@ export class DatabasePoolDataService implements PoolDataService {
                 id: {
                     notIn: excludedFromRouting,
                 },
+                chain: 'FANTOM',
             },
             include: {
                 dynamicData: true,
@@ -82,6 +83,8 @@ export class DatabasePoolDataService implements PoolDataService {
                 return 'Element';
             case 'INVESTMENT':
                 return 'Investment';
+            case 'GYRO':
+                return 'GyroE';
         }
 
         return 'UNKNOWN';
