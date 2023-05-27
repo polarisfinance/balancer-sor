@@ -14,15 +14,16 @@ import { isSameAddress } from './utils';
 import { EMPTY_SWAPINFO } from './constants';
 import {
     NewPath,
-    PoolDataService,
     PoolFilter,
-    SorConfig,
     SubgraphPoolBase,
     Swap,
     SwapInfo,
     SwapOptions,
     SwapTypes,
     TokenPriceService,
+    PoolDataService,
+    SorConfig,
+    GraphQLArgs,
 } from './types';
 import { Zero } from '@ethersproject/constants';
 
@@ -69,8 +70,8 @@ export class SOR {
      * fetchPools Retrieves pools information and saves to internal pools cache.
      * @returns {boolean} True if pools fetched successfully, False if not.
      */
-    async fetchPools(): Promise<boolean> {
-        const success = await this.poolCacher.fetchPools();
+    async fetchPools(queryArgs?: GraphQLArgs): Promise<boolean> {
+        const success = await this.poolCacher.fetchPools(queryArgs);
 
         if (success) {
             const pools = this.poolCacher.getPools();
@@ -79,7 +80,6 @@ export class SOR {
 
         return success;
     }
-    /**
 
     /**
      * getSwaps Retrieve information for best swap tokenIn>tokenOut.
@@ -87,7 +87,7 @@ export class SOR {
      * @param {string} tokenOut - Address of tokenOut.
      * @param {SwapTypes} swapType - SwapExactIn where the amount of tokens in (sent to the Pool) is known or SwapExactOut where the amount of tokens out (received from the Pool) is known.
      * @param {BigNumberish} swapAmount - Either amountIn or amountOut depending on the `swapType` value.
-     * @param swapOptions 
+     * @param swapOptions
      * @param useBpts Set to true to consider join/exit weighted pool paths (these will need formatted and submitted via Relayer)
      * @returns Swap information including return amount and swaps structure to be submitted to Vault.
      */
